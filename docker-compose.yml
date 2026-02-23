@@ -66,6 +66,7 @@ services:
       - NGINX_TEST_COMMAND=${NGINX_TEST_COMMAND:-/bin/true}
       - NGINX_RELOAD_COMMAND=${NGINX_RELOAD_COMMAND:-/bin/true}
       - NGINX_COMMAND_TIMEOUT_SECONDS=${NGINX_COMMAND_TIMEOUT_SECONDS:-15}
+      - ALLOW_PRIVATE_UPSTREAMS=${ALLOW_PRIVATE_UPSTREAMS:-false}
     depends_on:
       - postgres
       - redis

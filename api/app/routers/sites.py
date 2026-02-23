@@ -14,6 +14,11 @@ from app.models import Site as SiteModel
 from app.schemas import SiteCreate, Site as SiteSchema, UserInDB
 from app.core.security import get_current_admin_user
 from app.services.nginx_config_manager import NginxConfigManager, NginxConfigApplyError
+from app.utils.upstream_validation import (
+    UpstreamValidationError,
+    validate_server_name,
+    validate_upstream_url,
+)
 
 router = APIRouter(prefix="/sites", tags=["Sites"])
 nginx_config_manager = NginxConfigManager()
@@ -98,16 +103,25 @@ async def create_site(
         current_user: UserInDB = Depends(get_current_admin_user)
 ):
     """Add a new protected site."""
+    try:
+        validated_host = validate_server_name(site.host)
+        upstream_result = await run_in_threadpool(validate_upstream_url, site.upstream_url)
+    except UpstreamValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
     existing = await session.execute(
-        select(SiteModel).filter_by(host=site.host)
+        select(SiteModel).filter_by(host=validated_host)
     )
     if existing.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Site with host '{site.host}' already exists."
+            detail=f"Site with host '{validated_host}' already exists."
         )
 
-    new_site = SiteModel(**site.model_dump())
+    site_data = site.model_dump()
+    site_data["host"] = validated_host
+    site_data["upstream_url"] = upstream_result.normalized_url
+    new_site = SiteModel(**site_data)
     session.add(new_site)
     try:
         await session.flush()
@@ -131,21 +145,29 @@ async def update_site(
         current_user: UserInDB = Depends(get_current_admin_user)
 ):
     """Update an existing protected site."""
+    try:
+        validated_host = validate_server_name(site_update.host)
+        upstream_result = await run_in_threadpool(validate_upstream_url, site_update.upstream_url)
+    except UpstreamValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
     db_site = await session.get(SiteModel, site_id)
     if not db_site:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Site with ID {site_id} not found.")
 
-    if db_site.host != site_update.host:
+    if db_site.host != validated_host:
         conflict = await session.execute(
-            select(SiteModel).filter_by(host=site_update.host)
+            select(SiteModel).filter_by(host=validated_host)
         )
         if conflict.scalars().first():
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                f"Site with host '{site_update.host}' already exists."
+                f"Site with host '{validated_host}' already exists."
             )
 
     update_data = site_update.model_dump()
+    update_data["host"] = validated_host
+    update_data["upstream_url"] = upstream_result.normalized_url
     for key, value in update_data.items():
         setattr(db_site, key, value)
 
