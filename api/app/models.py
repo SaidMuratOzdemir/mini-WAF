@@ -1,6 +1,6 @@
 # ./api/app/models.py
 
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, JSON
 from sqlalchemy.sql import func
 from sqlalchemy.orm import declarative_base
 Base = declarative_base()
@@ -13,6 +13,7 @@ class User(Base):
     username = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
     is_admin = Column(Boolean, default=False, nullable=False)
+    role = Column(String, default="admin", nullable=False)
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -34,6 +35,8 @@ class Site(Base):
     upstream_tls_verify = Column(Boolean, default=True, nullable=False)
     upstream_tls_server_name_override = Column(String, nullable=True)
     hsts_enabled = Column(Boolean, default=False, nullable=False)
+    resolved_upstream_ips = Column(JSON, nullable=True)
+    last_resolved_at = Column(DateTime, nullable=True)
     xss_enabled = Column(Boolean, default=True)
     sql_enabled = Column(Boolean, default=True)
     vt_enabled = Column(Boolean, default=False)
@@ -50,6 +53,38 @@ class Certificate(Base):
     is_default = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class UpstreamPolicy(Base):
+    __tablename__ = "upstream_policies"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    allow_private_upstreams = Column(Boolean, default=False, nullable=False)
+    allowed_private_cidrs = Column(String, nullable=True)
+    denied_cidrs = Column(String, nullable=True)
+    allowed_upstream_ports = Column(String, nullable=True)
+    denied_hostnames = Column(String, nullable=True)
+    allowed_hostname_suffixes = Column(String, nullable=True)
+    updated_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    actor_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_username = Column(String, nullable=True)
+    action = Column(String, nullable=False)
+    target_type = Column(String, nullable=False)
+    target_id = Column(String, nullable=True)
+    before_json = Column(JSON, nullable=True)
+    after_json = Column(JSON, nullable=True)
+    success = Column(Boolean, nullable=False, default=True)
+    error_message = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
 
 class MaliciousPattern(Base):

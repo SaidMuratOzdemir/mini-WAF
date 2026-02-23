@@ -66,8 +66,14 @@ services:
       - NGINX_TEST_COMMAND=python /app/app/services/nginx_control_client.py validate
       - NGINX_RELOAD_COMMAND=python /app/app/services/nginx_control_client.py reload
       - NGINX_CONTROL_BASE_URL=${NGINX_CONTROL_BASE_URL:-http://nginx-control:8081}
+      - NGINX_CONTROL_TOKEN=${NGINX_CONTROL_TOKEN:-change-me-nginx-control-token}
       - NGINX_COMMAND_TIMEOUT_SECONDS=${NGINX_COMMAND_TIMEOUT_SECONDS:-15}
       - ALLOW_PRIVATE_UPSTREAMS=${ALLOW_PRIVATE_UPSTREAMS:-false}
+      - ALLOWED_PRIVATE_CIDRS=${ALLOWED_PRIVATE_CIDRS:-}
+      - DENIED_CIDRS=${DENIED_CIDRS:-}
+      - ALLOWED_UPSTREAM_PORTS=${ALLOWED_UPSTREAM_PORTS:-}
+      - DENIED_HOSTNAMES=${DENIED_HOSTNAMES:-}
+      - ALLOWED_HOSTNAME_SUFFIXES=${ALLOWED_HOSTNAME_SUFFIXES:-}
       - CERT_STORAGE_DIR=${CERT_STORAGE_DIR:-/shared/certs}
       - NGINX_UPSTREAM_CA_BUNDLE_PATH=${NGINX_UPSTREAM_CA_BUNDLE_PATH:-/etc/ssl/certs/ca-certificates.crt}
     volumes:
@@ -79,6 +85,7 @@ services:
       - mongodb
     networks:
       - waf-core-net
+      - waf-control-net
     restart: unless-stopped
 
   waf:
@@ -150,6 +157,9 @@ services:
       dockerfile: Dockerfile
     expose:
       - "8081"
+    environment:
+      - NGINX_CONTROL_TOKEN=${NGINX_CONTROL_TOKEN:-change-me-nginx-control-token}
+      - NGINX_CONTROL_COOLDOWN_SECONDS=${NGINX_CONTROL_COOLDOWN_SECONDS:-0}
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
@@ -161,6 +171,7 @@ services:
     pid: "service:nginx"
     networks:
       - waf-core-net
+      - waf-control-net
     restart: unless-stopped
 
 volumes:
@@ -173,3 +184,5 @@ volumes:
 networks:
   waf-core-net:
     external: true
+  waf-control-net:
+    internal: true

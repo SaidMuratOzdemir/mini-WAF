@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import ipaddress
-import os
 import re
 import socket
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from app.services.upstream_policy_service import UpstreamPolicySnapshot, policy_from_env
 
 DISALLOWED_HOSTNAMES = {"localhost"}
 METADATA_IPV4 = ipaddress.ip_address("169.254.169.254")
@@ -26,13 +26,7 @@ class UpstreamValidationResult:
     hostname: str
     port: int
     resolved_ips: list[str]
-
-
-def _bool_from_env(env_key: str, default: bool = False) -> bool:
-    raw = os.getenv(env_key)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    is_private_target: bool = False
 
 
 def _strip_ipv6_brackets(host: str) -> str:
@@ -65,15 +59,26 @@ def validate_server_name(host: str) -> str:
     return normalized
 
 
-def _evaluate_ip_policy(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address, allow_private: bool) -> None:
+def _evaluate_ip_policy(
+        ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address,
+        policy: UpstreamPolicySnapshot,
+) -> None:
     if ip_obj.is_loopback:
         raise UpstreamValidationError("Bu hedef güvenlik politikası nedeniyle yasaklandı (loopback).")
 
     if ip_obj == METADATA_IPV4:
         raise UpstreamValidationError("Bu hedef güvenlik politikası nedeniyle yasaklandı (metadata).")
 
-    if ip_obj.is_private and not allow_private:
+    for denied_network in policy.denied_cidrs:
+        if ip_obj in denied_network:
+            raise UpstreamValidationError("Bu hedef güvenlik politikası nedeniyle yasaklandı (denied CIDR).")
+
+    if ip_obj.is_private and not policy.allow_private_upstreams:
         raise UpstreamValidationError("Bu hedef güvenlik politikası nedeniyle yasaklandı (private IP).")
+
+    if ip_obj.is_private and policy.allowed_private_cidrs:
+        if not any(ip_obj in allowed_network for allowed_network in policy.allowed_private_cidrs):
+            raise UpstreamValidationError("Bu hedef güvenlik politikası nedeniyle yasaklandı (private CIDR allowlist).")
 
 
 def _resolve_hostname_ips(hostname: str, port: int) -> list[str]:
@@ -97,7 +102,10 @@ def _resolve_hostname_ips(hostname: str, port: int) -> list[str]:
     return resolved
 
 
-def validate_upstream_url(upstream_url: str, allow_private: bool | None = None) -> UpstreamValidationResult:
+def validate_upstream_url(
+        upstream_url: str,
+        policy: UpstreamPolicySnapshot | None = None,
+) -> UpstreamValidationResult:
     if not upstream_url or upstream_url.isspace():
         raise UpstreamValidationError("Geçersiz URL: upstream URL boş olamaz.")
 
@@ -121,23 +129,32 @@ def validate_upstream_url(upstream_url: str, allow_private: bool | None = None) 
     if port < 1 or port > 65535:
         raise UpstreamValidationError("Geçersiz URL: port 1-65535 aralığında olmalıdır.")
 
-    allow_private_effective = _bool_from_env("ALLOW_PRIVATE_UPSTREAMS", False) if allow_private is None else allow_private
+    effective_policy = policy or policy_from_env()
+    if effective_policy.allowed_upstream_ports and port not in effective_policy.allowed_upstream_ports:
+        raise UpstreamValidationError("Bu hedef güvenlik politikası nedeniyle yasaklandı (port policy).")
 
     hostname = parsed.hostname.lower()
     if hostname in DISALLOWED_HOSTNAMES:
         raise UpstreamValidationError("Bu hedef güvenlik politikası nedeniyle yasaklandı (localhost).")
 
+    if not effective_policy.allows_hostname(hostname):
+        raise UpstreamValidationError("Bu hedef güvenlik politikası nedeniyle yasaklandı (hostname policy).")
+
     resolved_ips: list[str] = []
+    is_private_target = False
 
     try:
         ip_obj = ipaddress.ip_address(hostname)
-        _evaluate_ip_policy(ip_obj, allow_private_effective)
+        _evaluate_ip_policy(ip_obj, effective_policy)
+        is_private_target = ip_obj.is_private
         resolved_ips = [ip_obj.compressed]
     except ValueError:
         resolved_ips = _resolve_hostname_ips(hostname, port)
         for ip_str in resolved_ips:
             ip_obj = ipaddress.ip_address(ip_str)
-            _evaluate_ip_policy(ip_obj, allow_private_effective)
+            _evaluate_ip_policy(ip_obj, effective_policy)
+            if ip_obj.is_private:
+                is_private_target = True
 
     # NOTE: DNS rebinding'e karşı tam koruma için runtime çözümleme/allowlist yaklaşımı sonraki fazlarda eklenmelidir.
     return UpstreamValidationResult(
@@ -146,4 +163,5 @@ def validate_upstream_url(upstream_url: str, allow_private: bool | None = None) 
         hostname=hostname,
         port=port,
         resolved_ips=resolved_ips,
+        is_private_target=is_private_target,
     )

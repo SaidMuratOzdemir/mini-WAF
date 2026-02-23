@@ -19,11 +19,15 @@ def main() -> int:
 
     action = sys.argv[1]
     base_url = os.getenv("NGINX_CONTROL_BASE_URL", "http://nginx-control:8081").rstrip("/")
+    control_token = os.getenv("NGINX_CONTROL_TOKEN", "").strip()
+    if not control_token:
+        sys.stderr.write("NGINX_CONTROL_TOKEN is not configured.\n")
+        return 1
     url = f"{base_url}{ENDPOINTS[action]}"
 
     try:
         with httpx.Client(timeout=10.0) as client:
-            response = client.post(url)
+            response = client.post(url, headers={"X-Nginx-Control-Token": control_token})
         output = response.text.strip()
         if output:
             print(output)

@@ -1,6 +1,6 @@
 # Reverse Proxy WAF Appliance
 
-This project now supports dynamic reverse-proxy site onboarding from Admin UI/API, including per-site TLS termination.
+This project now supports dynamic reverse-proxy site onboarding from Admin UI/API, including per-site TLS termination and control-plane hardening.
 
 ## Runtime Flow
 
@@ -46,8 +46,46 @@ HTTPS flow:
 - Allowed schemes: `http`, `https`
 - Blocked by default: `localhost`, loopback (`127.0.0.0/8`, `::1`), metadata (`169.254.169.254`)
 - Private IP policy is controlled by `ALLOW_PRIVATE_UPSTREAMS` (default `false`)
+- Fine-grained upstream policy supports:
+  - `ALLOWED_PRIVATE_CIDRS`
+  - `DENIED_CIDRS` (always prioritized)
+  - `ALLOWED_UPSTREAM_PORTS`
+  - `DENIED_HOSTNAMES` (wildcard patterns)
+  - `ALLOWED_HOSTNAME_SUFFIXES`
 - Host/server_name validation rejects unsafe characters to prevent nginx config injection.
 - DNS rebinding full mitigation is not in this phase (follow-up hardening required).
+
+## RBAC
+
+- `admin`
+  - Site CRUD allowed.
+  - Public upstreams allowed.
+  - Private/LAN upstream targets are denied.
+- `super_admin`
+  - Site CRUD allowed, including private/LAN upstreams (policy permitting).
+  - Certificate management allowed.
+  - Upstream global policy updates allowed.
+  - Audit log read access allowed.
+
+## Audit Logging
+
+Control-plane actions are persisted in `audit_logs`:
+- Site create/update/delete
+- Certificate create/update/delete
+- Policy update / policy-driven site revalidation
+- Failed apply operations and validation errors
+
+Each entry stores actor, action, target, success/failure, request IP, and timestamp.
+
+## nginx-control hardening
+
+- API -> `nginx-control` calls require `X-Nginx-Control-Token`.
+- Only fixed helper actions are supported:
+  - `POST /validate` -> `nginx -t`
+  - `POST /reload` -> `nginx -t` + `nginx -s reload`
+- Command injection surface is minimized: no user-supplied shell command path/args.
+- Reload cooldown (`NGINX_CONTROL_COOLDOWN_SECONDS`) can be enabled to mitigate rapid reload abuse (default `0`, disabled).
+- `nginx-control` is attached to internal control network (`waf-control-net`) and is not published to host.
 
 ## Docker Wiring
 
@@ -76,9 +114,16 @@ HTTPS flow:
 ## Environment Variables
 
 - `ALLOW_PRIVATE_UPSTREAMS` (default `false`)
+- `ALLOWED_PRIVATE_CIDRS` (CSV)
+- `DENIED_CIDRS` (CSV, high priority deny list)
+- `ALLOWED_UPSTREAM_PORTS` (CSV)
+- `DENIED_HOSTNAMES` (CSV wildcard patterns)
+- `ALLOWED_HOSTNAME_SUFFIXES` (CSV suffix list)
 - `CERT_STORAGE_DIR` (default `/shared/certs`)
 - `NGINX_GENERATED_CONFIG_DIR` (default `/shared/nginx/generated`)
 - `NGINX_CONTROL_BASE_URL` (default `http://nginx-control:8081`)
+- `NGINX_CONTROL_TOKEN` (required shared secret for API<->helper)
+- `NGINX_CONTROL_COOLDOWN_SECONDS` (default `0`, set to `1`/`2` for cooldown)
 - `NGINX_UPSTREAM_CA_BUNDLE_PATH` (default `/etc/ssl/certs/ca-certificates.crt`)
 
 ## Notes
@@ -86,6 +131,8 @@ HTTPS flow:
 - This phase does not implement automated ACME/Let's Encrypt provisioning.
 - Certificate rotation automation and wildcard certificate automation are out of scope.
 - DNS rebinding full mitigation remains a follow-up hardening task.
+- This phase adds upstream IP snapshot (`resolved_upstream_ips`, `last_resolved_at`) and pre-apply revalidation.
+- Optional periodic revalidation endpoint: `POST /api/v1/policies/upstream/revalidate-sites`.
 
 ## Non-Goals (This Phase)
 

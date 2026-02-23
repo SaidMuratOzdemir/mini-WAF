@@ -21,6 +21,7 @@ class UserBase(BaseModel):
 class UserInDB(UserBase):
     id: int
     is_admin: bool
+    role: str = "admin"
     model_config = ConfigDict(from_attributes=True)
 
 # --- Site Schemas ---
@@ -96,6 +97,8 @@ class SiteCreate(SiteBase):
 class Site(SiteBase):
     id: int
     health_status: Optional[str] = None
+    resolved_upstream_ips: Optional[list[str]] = None
+    last_resolved_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -106,6 +109,43 @@ class CertificateOut(BaseModel):
     has_chain: bool = False
     created_at: datetime
     updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UpstreamPolicyBase(BaseModel):
+    allow_private_upstreams: bool = False
+    allowed_private_cidrs: Optional[str] = None
+    denied_cidrs: Optional[str] = None
+    allowed_upstream_ports: Optional[str] = None
+    denied_hostnames: Optional[str] = None
+    allowed_hostname_suffixes: Optional[str] = None
+
+
+class UpstreamPolicyUpdate(UpstreamPolicyBase):
+    pass
+
+
+class UpstreamPolicyOut(UpstreamPolicyBase):
+    id: int
+    updated_by_user_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AuditLogOut(BaseModel):
+    id: int
+    actor_user_id: Optional[int] = None
+    actor_username: Optional[str] = None
+    action: str
+    target_type: str
+    target_id: Optional[str] = None
+    before_json: Optional[dict] = None
+    after_json: Optional[dict] = None
+    success: bool
+    error_message: Optional[str] = None
+    ip_address: Optional[str] = None
+    created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
 # --- Malicious Pattern Schemas ---

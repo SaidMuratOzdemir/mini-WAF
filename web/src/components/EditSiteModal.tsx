@@ -17,6 +17,7 @@ import type { Site, SiteCreate } from '../types/Site';
 import { updateSite } from '../api/sites';
 import type { Certificate } from '../types/Certificate';
 import { fetchCertificates } from '../api/certificates';
+import { useAuth } from '../context/AuthContext';
 
 interface EditSiteModalProps {
     open: boolean;
@@ -26,6 +27,7 @@ interface EditSiteModalProps {
 }
 
 const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) => {
+    const { role } = useAuth();
     const [certificates, setCertificates] = useState<Certificate[]>([]);
     const [formData, setFormData] = useState<SiteCreate>({
         host: '',
@@ -51,6 +53,10 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
 
     // Reset form when site changes
     useEffect(() => {
+        if (role !== 'super_admin') {
+            setCertificates([]);
+            return;
+        }
         const loadCertificates = async () => {
             try {
                 const data = await fetchCertificates();
@@ -60,7 +66,7 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
             }
         };
         void loadCertificates();
-    }, []);
+    }, [role]);
 
     useEffect(() => {
         if (site) {
@@ -192,7 +198,7 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
                         label="TLS Certificate"
                         value={formData.tls_certificate_id ?? ''}
                         onChange={handleInputChange('tls_certificate_id')}
-                        disabled={loading || !formData.tls_enabled}
+                        disabled={loading || !formData.tls_enabled || role !== 'super_admin'}
                         helperText={!formData.tls_enabled ? 'Enable TLS to select a certificate.' : 'Leave empty to use default certificate.'}
                     >
                         <MenuItem value="">

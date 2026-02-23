@@ -24,6 +24,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function SitesPage() {
   const siteListRef = useRef<SiteListRef>(null);
   const [certRefreshToken, setCertRefreshToken] = useState(0);
+  const { role } = useAuth();
 
   const handleSiteAdded = useCallback(() => {
     console.log('handleSiteAdded called, forcing refresh');
@@ -42,8 +43,14 @@ function SitesPage() {
       <Box sx={{ mb: 4 }}>
         <VirusTotalStats />
       </Box>
-      <CertificateManager onCertificatesChanged={handleCertificatesChanged} />
-      <SiteForm onSiteAdded={handleSiteAdded} certRefreshToken={certRefreshToken} />
+      {role === 'super_admin' && (
+        <CertificateManager onCertificatesChanged={handleCertificatesChanged} />
+      )}
+      <SiteForm
+        onSiteAdded={handleSiteAdded}
+        certRefreshToken={certRefreshToken}
+        currentUserRole={role}
+      />
       <Box sx={{ mt: 4 }}>
         <SiteList ref={siteListRef} />
       </Box>

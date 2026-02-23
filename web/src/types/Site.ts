@@ -18,6 +18,8 @@ export interface Site {
     sql_enabled: boolean;
     vt_enabled: boolean;
     health_status?: 'healthy' | 'unhealthy' | 'unknown';
+    resolved_upstream_ips?: string[] | null;
+    last_resolved_at?: string | null;
 }
 
 export interface SiteCreate {

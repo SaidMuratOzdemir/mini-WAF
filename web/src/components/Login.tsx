@@ -10,6 +10,7 @@ import {
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 
 
 export function Login() {
@@ -18,6 +19,7 @@ export function Login() {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
+    const { refreshCurrentUser } = useAuth();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -34,6 +36,7 @@ export function Login() {
                 body: formData
             });
             localStorage.setItem('token', data.access_token);
+            await refreshCurrentUser();
             navigate('/sites');
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Login failed');

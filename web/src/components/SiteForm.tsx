@@ -19,9 +19,26 @@ import type { Certificate } from '../types/Certificate';
 interface SiteFormProps {
     onSiteAdded: () => void;
     certRefreshToken?: number;
+    currentUserRole?: 'admin' | 'super_admin' | null;
 }
 
-export function SiteForm({ onSiteAdded, certRefreshToken = 0 }: SiteFormProps) {
+function isLikelyPrivateUpstream(rawUrl: string): boolean {
+    try {
+        const parsed = new URL(rawUrl.trim());
+        const host = parsed.hostname.toLowerCase();
+        if (host === 'localhost' || host.endsWith('.local')) return true;
+        if (/^127\./.test(host)) return true;
+        if (host === '::1') return true;
+        if (/^10\./.test(host)) return true;
+        if (/^192\.168\./.test(host)) return true;
+        if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)) return true;
+        return false;
+    } catch {
+        return false;
+    }
+}
+
+export function SiteForm({ onSiteAdded, certRefreshToken = 0, currentUserRole = null }: SiteFormProps) {
     const [certificates, setCertificates] = useState<Certificate[]>([]);
     const [formData, setFormData] = useState<SiteCreate>({
         host: '',
@@ -45,6 +62,10 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0 }: SiteFormProps) {
     const [error, setError] = useState<string>('');
 
     useEffect(() => {
+        if (currentUserRole !== 'super_admin') {
+            setCertificates([]);
+            return;
+        }
         const loadCertificates = async () => {
             try {
                 const data = await fetchCertificates();
@@ -54,7 +75,7 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0 }: SiteFormProps) {
             }
         };
         void loadCertificates();
-    }, [certRefreshToken]);
+    }, [certRefreshToken, currentUserRole]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -68,6 +89,9 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0 }: SiteFormProps) {
             }
             if (!formData.upstream_url.trim()) {
                 throw new Error('Upstream URL is required');
+            }
+            if (currentUserRole !== 'super_admin' && isLikelyPrivateUpstream(formData.upstream_url)) {
+                throw new Error('Private/LAN upstream tanımı yalnızca super_admin rolü için izinlidir.');
             }
             if (formData.tls_enabled && !formData.tls_certificate_id && certificates.length === 0) {
                 throw new Error('TLS enabled requires a certificate (upload one or configure a default).');
@@ -174,6 +198,11 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0 }: SiteFormProps) {
                         onChange={handleChange}
                         placeholder="e.g., http://app-internal:8080"
                     />
+                    {currentUserRole !== 'super_admin' && (
+                        <Alert severity="info">
+                            Private/LAN upstream hedefleri yalnızca super_admin rolü tarafından eklenebilir.
+                        </Alert>
+                    )}
 
                     <TextField
                         required
@@ -194,7 +223,7 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0 }: SiteFormProps) {
                         name="tls_certificate_id"
                         value={formData.tls_certificate_id ?? ''}
                         onChange={handleChange}
-                        disabled={!formData.tls_enabled}
+                        disabled={!formData.tls_enabled || currentUserRole !== 'super_admin'}
                         helperText={!formData.tls_enabled ? 'Enable TLS to select a certificate.' : 'Leave empty to use default certificate.'}
                     >
                         <MenuItem value="">

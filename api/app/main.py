@@ -7,7 +7,7 @@ import redis.asyncio as redis
 
 from app.core.config import settings
 from app.core import dependencies
-from app.routers import auth, sites, ips, patterns, system, logs, certificates
+from app.routers import auth, sites, ips, patterns, system, logs, certificates, policies, audits
 
 
 @asynccontextmanager
@@ -40,6 +40,8 @@ app = FastAPI(
         {"name": "IP Management", "description": "Manage banned and whitelisted IP addresses."},
         {"name": "Patterns", "description": "Manage malicious security patterns."},
         {"name": "Certificates", "description": "Manage TLS certificates for HTTPS sites."},
+        {"name": "Policies", "description": "Manage upstream security policy configuration."},
+        {"name": "Audit", "description": "Audit trail for control-plane actions."},
         {"name": "System", "description": "System health, status, and cache operations."},
         {"name": "logs", "description": "Request and response logging management."},
     ],
@@ -60,5 +62,7 @@ app.include_router(sites.router, prefix=settings.API_V1_STR)
 app.include_router(ips.router, prefix=settings.API_V1_STR)
 app.include_router(patterns.router, prefix=settings.API_V1_STR)
 app.include_router(certificates.router, prefix=settings.API_V1_STR)
+app.include_router(policies.router, prefix=settings.API_V1_STR)
+app.include_router(audits.router, prefix=settings.API_V1_STR)
 app.include_router(system.router, prefix=settings.API_V1_STR)
 app.include_router(logs.router, prefix=settings.API_V1_STR)

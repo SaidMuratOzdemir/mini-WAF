@@ -17,6 +17,8 @@ from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security_scheme = HTTPBearer()
+ROLE_ADMIN = "admin"
+ROLE_SUPER_ADMIN = "super_admin"
 
 
 class TokenData(BaseModel):
@@ -91,5 +93,16 @@ async def get_current_admin_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to perform this action"
+        )
+    return current_user
+
+
+async def get_current_super_admin_user(
+        current_user: UserInDB = Depends(get_current_admin_user)
+) -> UserInDB:
+    if current_user.role != ROLE_SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin role is required for this action"
         )
     return current_user
