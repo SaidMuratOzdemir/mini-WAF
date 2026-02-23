@@ -9,24 +9,22 @@ services:
       - POSTGRES_PASSWORD=waf
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U waf -d waf" ]
+      test: ["CMD-SHELL", "pg_isready -U waf -d waf"]
       interval: 5s
       timeout: 5s
       retries: 5
-    networks: [ waf-core-net ]
+    networks: [waf-core-net]
     restart: unless-stopped
 
   redis:
     image: redis:7
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
-    networks: [ waf-core-net ]
+    networks: [waf-core-net]
     restart: unless-stopped
 
   mongodb:
@@ -43,10 +41,8 @@ services:
       - quiet=1
     volumes:
       - mongodb_data:/data/db
-    ports:
-      - "27017:27017"
     healthcheck:
-      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -58,8 +54,8 @@ services:
     build:
       context: ./api
       dockerfile: Dockerfile
-    ports:
-      - "8002:8001"
+    expose:
+      - "8001"
     environment:
       - DATABASE_URL=postgresql+asyncpg://waf:waf@postgres:5432/waf
       - REDIS_URL=redis://redis:6379
@@ -78,36 +74,50 @@ services:
     build:
       context: .
       dockerfile: ./waf/Dockerfile
-    ports:
-      - "80:80"
+    expose:
+      - "8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://waf:waf@postgres:5432/waf
       - REDIS_URL=redis://redis:6379
       - MONGODB_URL=mongodb://mongodb:27017/waf_logs
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
       - DEBUG=true
-      - POLL_INTERVAL=5
+      - BAN_TTL_SECONDS=3600
+      - INSPECTION_QUEUE_SIZE=5000
+      - INSPECTION_WORKERS=8
+      - VT_TIMEOUT_SECONDS=8
     depends_on:
-      - postgres
       - redis
       - mongodb
-      - api
     networks:
       - waf-core-net
-      - juiceshop-net
-      - hr-system-net
     restart: unless-stopped
 
   waf-web:
     build:
       context: ./web
       dockerfile: Dockerfile
-    ports:
-      - "5173:5173"
+    expose:
+      - "5173"
     networks:
       - waf-core-net
     depends_on:
       - api
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      - waf
+      - api
+      - waf-web
+    networks:
+      - waf-core-net
     restart: unless-stopped
 
 volumes:
@@ -117,18 +127,3 @@ volumes:
 networks:
   waf-core-net:
     external: true
-    ipam:
-      config:
-        - subnet: 10.99.0.0/24
-
-  juiceshop-net:
-    external: true
-    ipam:
-      config:
-        - subnet: 10.99.2.0/24
-
-  hr-system-net:
-    external: true
-    ipam:
-      config:
-        - subnet: 10.99.3.0/24

@@ -1,281 +1,456 @@
+"""Decoupled WAF authorization engine for Nginx auth_request."""
+
+from __future__ import annotations
+
 import asyncio
+import hashlib
 import logging
 import os
-import signal
-import sys
-import time
-from aiohttp import web, ClientSession, WSMsgType, ClientTimeout
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+from urllib.parse import urlparse, urlsplit
+
+import httpx
 import redis.asyncio as redis
-from dotenv import load_dotenv
+import uvicorn
+from fastapi import FastAPI, Request, Response
+from pymongo import AsyncMongoClient
 
-from models import Site
-from waf.integration.db.connection import init_database
-from waf.integration.db.repository import fetch_sites_from_db
-from waf.checks.security_engine import is_malicious_request, create_block_response
-from waf.adapters.virustotal.cache import VirusTotalCache
-from waf.checks.patterns.pattern_store import fetch_patterns_from_db
-from waf.integration.logging.request_logger import RequestLogger
+from waf.checks.patterns.advanced_analyzer import get_analyzer
+from waf.checks.security_engine import DEFAULT_POLICY, analyze_forwarded_request
+from waf.ip.banlist import BAN_KEY_PREFIX, CLEAN_KEY_PREFIX
+from waf.ip.local import is_local_ip
 
-load_dotenv()
-
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/waf_logs")
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "5"))
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "30"))
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
+MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://mongodb:27017/waf_logs")
+MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "")
+VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY", "")
+BAN_TTL_SECONDS = int(os.getenv("BAN_TTL_SECONDS", "3600"))
+INSPECTION_QUEUE_SIZE = int(os.getenv("INSPECTION_QUEUE_SIZE", "5000"))
+INSPECTION_WORKERS = int(os.getenv("INSPECTION_WORKERS", "8"))
+VT_TIMEOUT_SECONDS = float(os.getenv("VT_TIMEOUT_SECONDS", "8"))
+MAX_LOG_BODY_BYTES = int(os.getenv("MAX_LOG_BODY_BYTES", "16384"))
 
 logging.basicConfig(
     level=logging.DEBUG if DEBUG else logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
-logging.getLogger('aiohttp.access').setLevel(logging.ERROR)
-logging.getLogger('aiohttp.server').setLevel(logging.ERROR)
 
 
-class WAFManager:
-    def __init__(self):
-        self.sites = {}
-        self.runners = {}
-        self.redis_client = None
-        self.client_session = None
-        self.vt_cache = None
-        self.request_logger = None
-        self.pattern_task = None
-        self.load_lock = asyncio.Lock()
-        self.running = False
-
-    async def init_redis(self):
-        try:
-            self.redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-            await self.redis_client.ping()
-            logger.info("Redis connected")
-            self.vt_cache = VirusTotalCache(REDIS_URL)
-            await self.vt_cache.init_redis()
-        except Exception as e:
-            logger.warning(f"Redis init failed: {e}")
-            self.redis_client = None
-            self.vt_cache = None
-
-    async def init_mongodb(self):
-        try:
-            logger.info("Initializing MongoDB logging at %s", MONGODB_URL)
-            self.request_logger = RequestLogger(MONGODB_URL)
-            self.request_logger.init_mongodb()
-            logger.info("MongoDB logging initialized")
-        except Exception as e:
-            logger.warning(f"MongoDB init failed: {e}")
-            self.request_logger = None
-
-    async def load_sites(self):
-        async with self.load_lock:
-            new = await fetch_sites_from_db()
-            for port in set(self.sites) - set(new):
-                await self.stop_listener(port)
-            for port, hosts in new.items():
-                if port not in self.sites:
-                    await self.start_listener(port, hosts)
-                else:
-                    runner = self.runners.get(port)
-                    if runner:
-                        runner._app["hosts_config"] = hosts
-        self.sites = new
-
-    async def start_listener(self, port: int, hosts: dict):
-        app = web.Application()
-        app["port"] = port
-        app["hosts_config"] = hosts
-        app["waf_manager"] = self
-        app.router.add_route("*", "/{path:.*}", self.handle_request)
-        app.router.add_route("POST", "/waf/restart", self.handle_restart)
-        app.logger.setLevel(logging.ERROR)
-        runner = web.AppRunner(app, access_log=None)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", port)
-        await site.start()
-        self.runners[port] = runner
-
-    async def stop_listener(self, port: int):
-        runner = self.runners.pop(port, None)
-        if runner:
-            await runner.cleanup()
-
-    async def handle_request(self, request: web.Request) -> web.Response:
-        start_time = time.time()
-        body = await request.read()
-
-        if request.path == "/waf/restart":
-            return await self.handle_restart(request)
-
-        host = request.headers.get("Host", "").split(":")[0].lower()
-        site = request.app["hosts_config"].get(host)
-        if not site:
-            for cfg, s in request.app["hosts_config"].items():
-                if cfg.startswith("*.") and host.endswith(cfg[2:]):
-                    site = s
-                    break
-        if not site:
-            return web.Response(text="No site configuration found for this host.", status=404)
-
-        request_id = ""
-        if self.request_logger:
-            request_id = self.request_logger.log_request(request, site.name, body)
-
-        try:
-            is_mal, reason = await is_malicious_request(request, site, body)
-            if is_mal:
-                if self.request_logger:
-                    self.request_logger.log_blocked_request(request, site.name, reason, body)
-                return create_block_response(reason, request.remote or "unknown")
-
-            if (request.headers.get("connection", "").lower() == "upgrade" and
-                    request.headers.get("upgrade", "").lower() == "websocket"):
-                return await self.handle_websocket(request, site)
-
-            response, resp_body = await self.proxy_http_request(request, site, body)
-
-            if self.request_logger and request_id:
-                elapsed = (time.time() - start_time) * 1000
-                self.request_logger.log_response(request_id, response, resp_body, elapsed)
-
-            return response
-
-        except Exception:
-            logger.exception("Critical error during request handling")
-            return web.Response(text="Internal WAF Error", status=500,
-                                headers={"X-WAF-Error": "handler_exception"})
-
-    async def proxy_http_request(self, request: web.Request, site: Site, body: bytes):
-        if not self.client_session:
-            self.client_session = ClientSession(timeout=ClientTimeout(total=REQUEST_TIMEOUT))
-
-        headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
-        target = (site.backend_url if request.path.startswith("/api/") else site.frontend_url)
-        if "localhost" in target:
-            target = target.replace("localhost", "host.docker.internal")
-        url = f"{target.rstrip('/')}{request.path_qs}"
-
-        from urllib.parse import urlparse
-        backend_host = urlparse(target).hostname
-        if backend_host:
-            headers["Host"] = backend_host
-
-        async with self.client_session.request(
-                method=request.method,
-                url=url,
-                headers=headers,
-                data=body,
-                allow_redirects=False
-        ) as resp:
-
-            excluded = {"Content-Length", "Transfer-Encoding", "Content-Encoding", "Connection", "Keep-Alive"}
-            stream_resp = web.StreamResponse(status=resp.status)
-            for k, v in resp.headers.items():
-                if k not in excluded:
-                    stream_resp.headers[k] = v
-
-            stream_resp.headers["X-WAF-Protected"] = "true"
-            stream_resp.headers["X-WAF-Site"] = site.name
-
-            await stream_resp.prepare(request)
-
-            buffer = bytearray()
-            try:
-                while True:
-                    chunk = await resp.content.read(4096)
-                    if not chunk:
-                        break
-                    buffer.extend(chunk)
-                    await stream_resp.write(chunk)
-                await stream_resp.write_eof()
-            except (ConnectionResetError, Exception):
-                try:
-                    await stream_resp.write_eof()
-                except:  # noqa: E722
-                    pass
-
-            return stream_resp, bytes(buffer)
-
-    async def handle_websocket(self, request: web.Request, site: Site):
-        ws_srv = web.WebSocketResponse()
-        await ws_srv.prepare(request)
-
-        target_url = (site.backend_url if request.path.startswith("/api/") else site.frontend_url)
-        ws_url = target_url.replace("http://", "ws://").replace("https://", "wss://")
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{ws_url.rstrip('/')}{request.path_qs}") as ws_client:
-                async def relay_to_client():
-                    async for msg in ws_client:
-                        if msg.type == WSMsgType.TEXT:
-                            await ws_srv.send_str(msg.data)
-                        elif msg.type == WSMsgType.BINARY:
-                            await ws_srv.send_bytes(msg.data)
-
-                async def relay_to_server():
-                    async for msg in ws_srv:
-                        if msg.type == WSMsgType.TEXT:
-                            await ws_client.send_str(msg.data)
-                        elif msg.type == WSMsgType.BINARY:
-                            await ws_client.send_bytes(msg.data)
-
-                await asyncio.gather(relay_to_client(), relay_to_server())
-        return ws_srv
-
-    async def handle_restart(self, request: web.Request) -> web.Response:
-        try:
-            os.kill(os.getpid(), signal.SIGTERM)
-            return web.Response(text="Restart initiated", status=200)
-        except Exception:
-            return web.Response(text="Restart failed", status=500)
-
-    async def start(self):
-        await init_database()
-        await self.init_redis()
-        await self.init_mongodb()
-        self.pattern_task = asyncio.create_task(self._pattern_updater())
-        self.running = True
-
-        loop = asyncio.get_event_loop()
-        stop = loop.create_future()
-        loop.add_signal_handler(signal.SIGINT, stop.set_result, None)
-        loop.add_signal_handler(signal.SIGTERM, stop.set_result, None)
-
-        await self.load_sites()
-        await stop
-        await self.stop()
-
-    async def _pattern_updater(self):
-        while self.running:
-            try:
-                await fetch_patterns_from_db()
-            except Exception:
-                logger.exception("Pattern updater crashed")
-            await asyncio.sleep(POLL_INTERVAL)
-
-    async def stop(self):
-        self.running = False
-        if self.pattern_task:
-            self.pattern_task.cancel()
-        if self.client_session:
-            await self.client_session.close()
-        for port in list(self.runners):
-            await self.stop_listener(port)
-        if self.redis_client:
-            await self.redis_client.close()
-        if self.request_logger:
-            self.request_logger.close()
-        logger.info("WAF stopped gracefully.")
+@dataclass(slots=True)
+class InspectionJob:
+    client_ip: str
+    metadata: dict[str, Any]
+    body: bytes
+    queued_at: datetime
 
 
-async def main():
-    manager = WAFManager()
+def _resolve_mongo_db_name() -> str:
+    if MONGODB_DB_NAME:
+        return MONGODB_DB_NAME
+
+    parsed = urlparse(MONGODB_URL)
+    path = parsed.path.lstrip("/")
+    return path or "waf_logs"
+
+
+def _extract_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+
+    real_ip = request.headers.get("X-Real-IP", "").strip()
+    if real_ip:
+        return real_ip
+
+    if request.client and request.client.host:
+        return request.client.host
+
+    return "unknown"
+
+
+def _extract_metadata(request: Request) -> dict[str, Any]:
+    original_uri = request.headers.get("X-Original-URI") or request.url.path
+    parsed = urlsplit(original_uri)
+
+    return {
+        "method": request.headers.get("X-Original-Method", request.method),
+        "uri": original_uri,
+        "path": parsed.path or request.url.path,
+        "query": parsed.query or request.headers.get("X-Original-Query", ""),
+        "host": request.headers.get("X-Original-Host", request.headers.get("Host", "")),
+        "scheme": request.headers.get("X-Original-Proto", request.url.scheme),
+        "request_id": request.headers.get("X-Request-ID", ""),
+        "content_type": request.headers.get("Content-Type", ""),
+        "content_length": request.headers.get("Content-Length", ""),
+        "headers": dict(request.headers),
+        "received_at": datetime.now(timezone.utc),
+    }
+
+
+def _serialize_request_body(body: bytes, content_type: str) -> dict[str, Any]:
+    content_type_lc = (content_type or "").lower()
+    body_hash = hashlib.sha256(body).hexdigest() if body else ""
+
+    if not body:
+        return {"content": "", "content_type": content_type, "size": 0, "sha256": body_hash}
+
+    binary_types = (
+        "image/",
+        "video/",
+        "audio/",
+        "application/pdf",
+        "application/zip",
+        "application/octet-stream",
+    )
+    if any(marker in content_type_lc for marker in binary_types):
+        return {
+            "content": f"[BINARY_CONTENT:{len(body)} bytes]",
+            "content_type": content_type,
+            "size": len(body),
+            "sha256": body_hash,
+        }
+
+    decoded = body.decode("utf-8", errors="ignore")
+    truncated = len(decoded) > MAX_LOG_BODY_BYTES
+    if truncated:
+        decoded = decoded[:MAX_LOG_BODY_BYTES]
+
+    return {
+        "content": decoded,
+        "truncated": truncated,
+        "content_type": content_type,
+        "size": len(body),
+        "sha256": body_hash,
+    }
+
+
+def _is_vt_report_malicious(report: dict[str, Any]) -> bool:
+    attributes = report.get("data", {}).get("attributes", {})
+    stats = attributes.get("last_analysis_stats", {})
+
     try:
-        await manager.start()
+        malicious_count = int(stats.get("malicious", 0) or 0)
+        suspicious_count = int(stats.get("suspicious", 0) or 0)
     except Exception:
-        logger.exception("Fatal error in WAF Manager")
-        sys.exit(1)
+        malicious_count = 0
+        suspicious_count = 0
+
+    total = 0
+    for value in stats.values():
+        if isinstance(value, int):
+            total += value
+
+    if total > 0:
+        if malicious_count / total > 0.10:
+            return True
+        if suspicious_count / total > 0.20:
+            return True
+
+    try:
+        reputation = int(attributes.get("reputation", 0) or 0)
+    except Exception:
+        reputation = 0
+
+    return reputation < -50
+
+
+async def _query_virustotal(app: FastAPI, ip: str) -> dict[str, Any]:
+    if not VIRUSTOTAL_API_KEY:
+        return {
+            "status": "skipped",
+            "reason": "missing_api_key",
+            "http_status": None,
+            "is_malicious": False,
+            "response": None,
+        }
+
+    if not ip or ip == "unknown" or is_local_ip(ip):
+        return {
+            "status": "skipped",
+            "reason": "local_or_unknown_ip",
+            "http_status": None,
+            "is_malicious": False,
+            "response": None,
+        }
+
+    try:
+        response = await app.state.vt_http_client.get(
+            f"/ip_addresses/{ip}",
+            headers={"x-apikey": VIRUSTOTAL_API_KEY},
+        )
+    except httpx.TimeoutException:
+        logger.warning("VirusTotal timeout for ip=%s", ip)
+        return {
+            "status": "timeout",
+            "http_status": None,
+            "is_malicious": False,
+            "response": None,
+        }
+    except httpx.HTTPError as exc:
+        logger.warning("VirusTotal request error for ip=%s error=%s", ip, exc)
+        return {
+            "status": "request_error",
+            "http_status": None,
+            "is_malicious": False,
+            "response": {"error": str(exc)},
+        }
+
+    if response.status_code == 429:
+        logger.warning("VirusTotal rate limit (429) for ip=%s", ip)
+        return {
+            "status": "rate_limited",
+            "http_status": 429,
+            "is_malicious": False,
+            "response": None,
+        }
+
+    if response.status_code != 200:
+        body_preview = response.text[:1024]
+        logger.warning("VirusTotal non-200 status=%s for ip=%s", response.status_code, ip)
+        return {
+            "status": "error",
+            "http_status": response.status_code,
+            "is_malicious": False,
+            "response": {"body_preview": body_preview},
+        }
+
+    payload = response.json()
+    return {
+        "status": "ok",
+        "http_status": 200,
+        "is_malicious": _is_vt_report_malicious(payload),
+        "response": payload,
+    }
+
+
+async def _ban_ip(redis_client: redis.Redis | None, ip: str, reason: str) -> None:
+    if not redis_client or not ip or ip == "unknown":
+        return
+
+    try:
+        await redis_client.setex(f"{BAN_KEY_PREFIX}{ip}", BAN_TTL_SECONDS, reason)
+    except Exception:
+        logger.exception("Failed to ban ip=%s", ip)
+
+
+async def _log_inspection(app: FastAPI, document: dict[str, Any]) -> None:
+    collection = app.state.mongo_collection
+    if collection is None:
+        return
+
+    try:
+        await collection.insert_one(document)
+    except Exception:
+        logger.exception("Failed to write inspection document to MongoDB")
+
+
+async def _process_job(app: FastAPI, worker_id: int, job: InspectionJob) -> None:
+    processing_errors: list[str] = []
+
+    pattern_malicious = False
+    pattern_reason = ""
+    try:
+        pattern_malicious, pattern_reason = await analyze_forwarded_request(
+            metadata=job.metadata,
+            body_bytes=job.body,
+            policy=DEFAULT_POLICY,
+        )
+    except Exception as exc:
+        processing_errors.append(f"pattern_analysis_error:{exc}")
+        logger.exception("Pattern analysis failed for ip=%s", job.client_ip)
+
+    try:
+        vt_result = await _query_virustotal(app, job.client_ip)
+    except Exception as exc:
+        vt_result = {
+            "status": "internal_error",
+            "http_status": None,
+            "is_malicious": False,
+            "response": {"error": str(exc)},
+        }
+        processing_errors.append(f"virustotal_error:{exc}")
+        logger.exception("VirusTotal query failed for ip=%s", job.client_ip)
+    vt_malicious = bool(vt_result.get("is_malicious", False))
+
+    is_malicious = pattern_malicious or vt_malicious
+    decision = "ban" if is_malicious else "allow"
+
+    ban_reason = ""
+    if pattern_malicious:
+        ban_reason = pattern_reason or "PATTERN_MATCH"
+    elif vt_malicious:
+        ban_reason = "MALICIOUS_IP_VT"
+
+    if decision == "ban":
+        await _ban_ip(app.state.redis_client, job.client_ip, ban_reason)
+
+    request_payload = {
+        **job.metadata,
+        "body": _serialize_request_body(job.body, str(job.metadata.get("content_type", ""))),
+        "client_ip": job.client_ip,
+    }
+
+    document = {
+        "timestamp": datetime.now(timezone.utc),
+        "worker_id": worker_id,
+        "queued_at": job.queued_at,
+        "decision": decision,
+        "ban_reason": ban_reason,
+        "pattern_analysis": {
+            "is_malicious": pattern_malicious,
+            "reason": pattern_reason,
+        },
+        "virustotal": vt_result,
+        "processing_errors": processing_errors,
+        "request": request_payload,
+    }
+
+    await _log_inspection(app, document)
+
+
+async def _inspection_worker(app: FastAPI, worker_id: int) -> None:
+    queue: asyncio.Queue[InspectionJob] = app.state.inspection_queue
+
+    while True:
+        job = await queue.get()
+        try:
+            await _process_job(app, worker_id, job)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Inspection worker %s crashed while processing a job", worker_id)
+        finally:
+            queue.task_done()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.redis_client = None
+    app.state.mongo_client = None
+    app.state.mongo_collection = None
+    app.state.vt_http_client = httpx.AsyncClient(
+        base_url="https://www.virustotal.com/api/v3",
+        timeout=httpx.Timeout(VT_TIMEOUT_SECONDS),
+    )
+    app.state.inspection_queue = asyncio.Queue(maxsize=INSPECTION_QUEUE_SIZE)
+    app.state.worker_tasks = []
+
+    try:
+        redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+        await redis_client.ping()
+        app.state.redis_client = redis_client
+        logger.info("Redis connected")
+    except Exception:
+        logger.exception("Redis initialization failed. Running fail-open.")
+
+    try:
+        mongo_client = AsyncMongoClient(MONGODB_URL)
+        mongo_db = mongo_client[_resolve_mongo_db_name()]
+        collection = mongo_db.inspections
+        await collection.create_index("timestamp")
+        await collection.create_index("request.client_ip")
+        await collection.create_index("decision")
+
+        app.state.mongo_client = mongo_client
+        app.state.mongo_collection = collection
+        logger.info("MongoDB async client initialized")
+    except Exception:
+        logger.exception("MongoDB initialization failed. Inspection logs disabled.")
+
+    try:
+        await get_analyzer()
+        logger.info("Pattern analyzer warmed up")
+    except Exception:
+        logger.exception("Pattern analyzer warmup failed")
+
+    workers = max(1, INSPECTION_WORKERS)
+    for idx in range(workers):
+        task = asyncio.create_task(_inspection_worker(app, idx), name=f"inspection-worker-{idx}")
+        app.state.worker_tasks.append(task)
+
+    logger.info(
+        "WAF authorization engine started with queue_size=%s workers=%s",
+        INSPECTION_QUEUE_SIZE,
+        workers,
+    )
+
+    try:
+        yield
+    finally:
+        try:
+            await asyncio.wait_for(app.state.inspection_queue.join(), timeout=3)
+        except Exception:
+            logger.warning("Queue drain timed out during shutdown")
+
+        for task in app.state.worker_tasks:
+            task.cancel()
+        await asyncio.gather(*app.state.worker_tasks, return_exceptions=True)
+
+        await app.state.vt_http_client.aclose()
+
+        redis_client = app.state.redis_client
+        if redis_client is not None:
+            try:
+                await redis_client.aclose()
+            except Exception:
+                pass
+
+        mongo_client = app.state.mongo_client
+        if mongo_client is not None:
+            mongo_client.close()
+
+
+app = FastAPI(title="WAF Auth Engine", version="3.0.0", lifespan=lifespan)
+
+
+@app.api_route("/inspect", methods=["GET", "POST"])
+async def inspect(request: Request) -> Response:
+    """Fail-open authorization endpoint called by Nginx auth_request."""
+
+    client_ip = _extract_client_ip(request)
+
+    try:
+        body = await request.body()
+        metadata = _extract_metadata(request)
+
+        redis_client: redis.Redis | None = request.app.state.redis_client
+        if redis_client is not None and client_ip and client_ip != "unknown":
+            try:
+                if await redis_client.exists(f"{BAN_KEY_PREFIX}{client_ip}"):
+                    return Response(status_code=403)
+
+                if await redis_client.exists(f"{CLEAN_KEY_PREFIX}{client_ip}"):
+                    return Response(status_code=200)
+            except Exception:
+                logger.exception("Redis lookup failed for ip=%s. Falling open.", client_ip)
+
+        job = InspectionJob(
+            client_ip=client_ip,
+            metadata=metadata,
+            body=body,
+            queued_at=datetime.now(timezone.utc),
+        )
+
+        try:
+            request.app.state.inspection_queue.put_nowait(job)
+        except asyncio.QueueFull:
+            logger.warning(
+                "Inspection queue full (size=%s). Dropping job for ip=%s uri=%s",
+                INSPECTION_QUEUE_SIZE,
+                client_ip,
+                metadata.get("uri", ""),
+            )
+
+        return Response(status_code=200)
+    except Exception:
+        logger.exception("Unhandled error in /inspect. Falling open for ip=%s", client_ip)
+        return Response(status_code=200)
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
-
-
+    uvicorn.run("waf.app.server:app", host="0.0.0.0", port=8000, workers=1)

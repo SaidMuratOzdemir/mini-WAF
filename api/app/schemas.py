@@ -1,7 +1,7 @@
 # api/app/schemas.py
 
 from __future__ import annotations
-from pydantic import BaseModel, HttpUrl, Field, field_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 
@@ -24,11 +24,8 @@ class UserInDB(UserBase):
 
 # --- Site Schemas ---
 class SiteBase(BaseModel):
-    port: int = Field(..., ge=1, le=65535, description="Port number for the site")
     name: str
     host: str = Field(..., description='Host header to match (e.g., "api.example.com")')
-    frontend_url: HttpUrl
-    backend_url: HttpUrl
     xss_enabled: bool = True
     sql_enabled: bool = True
     vt_enabled: bool = False

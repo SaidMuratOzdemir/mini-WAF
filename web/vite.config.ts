@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  base: '/admin-ui/',
   resolve: {
     alias: {
       "@": "/src",
@@ -13,12 +14,6 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     strictPort: true,
-    proxy: {
-      '/api': {
-        target: 'http://api:8001',
-        changeOrigin: true,
-      }
-    }
   },
   optimizeDeps: {
     force: true

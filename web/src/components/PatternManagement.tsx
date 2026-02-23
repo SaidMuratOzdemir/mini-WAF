@@ -26,19 +26,19 @@ const extendedPatternTypes: Array<{
   backendType: PatternType;
   uiOnly?: boolean;
 }> = [
-  // Backend-backed
-  { value: PatternType.XSS, label: 'XSS', color: 'error', backendType: PatternType.XSS },
-  { value: PatternType.SQL, label: 'SQL', color: 'primary', backendType: PatternType.SQL },
-  { value: PatternType.CUSTOM, label: 'CUSTOM', color: 'default', backendType: PatternType.CUSTOM },
-  // UI-only categories (mapped to CUSTOM for backend)
-  { value: 'RCE', label: 'RCE', color: 'warning', backendType: PatternType.CUSTOM, uiOnly: true },
-  { value: 'LFI', label: 'LFI', color: 'warning', backendType: PatternType.CUSTOM, uiOnly: true },
-  { value: 'SSRF', label: 'SSRF', color: 'warning', backendType: PatternType.CUSTOM, uiOnly: true },
-  { value: 'OpenRedirect', label: 'Open Redirect', color: 'info', backendType: PatternType.CUSTOM, uiOnly: true },
-  { value: 'PathTraversal', label: 'Path Traversal', color: 'info', backendType: PatternType.CUSTOM, uiOnly: true },
-  { value: 'XXE', label: 'XXE', color: 'secondary', backendType: PatternType.CUSTOM, uiOnly: true },
-  { value: 'CSRF', label: 'CSRF', color: 'secondary', backendType: PatternType.CUSTOM, uiOnly: true },
-];
+    // Backend-backed
+    { value: PatternType.XSS, label: 'XSS', color: 'error', backendType: PatternType.XSS },
+    { value: PatternType.SQL, label: 'SQL', color: 'primary', backendType: PatternType.SQL },
+    { value: PatternType.CUSTOM, label: 'CUSTOM', color: 'default', backendType: PatternType.CUSTOM },
+    // UI-only categories (mapped to CUSTOM for backend)
+    { value: 'RCE', label: 'RCE', color: 'warning', backendType: PatternType.CUSTOM, uiOnly: true },
+    { value: 'LFI', label: 'LFI', color: 'warning', backendType: PatternType.CUSTOM, uiOnly: true },
+    { value: 'SSRF', label: 'SSRF', color: 'warning', backendType: PatternType.CUSTOM, uiOnly: true },
+    { value: 'OpenRedirect', label: 'Open Redirect', color: 'info', backendType: PatternType.CUSTOM, uiOnly: true },
+    { value: 'PathTraversal', label: 'Path Traversal', color: 'info', backendType: PatternType.CUSTOM, uiOnly: true },
+    { value: 'XXE', label: 'XXE', color: 'secondary', backendType: PatternType.CUSTOM, uiOnly: true },
+    { value: 'CSRF', label: 'CSRF', color: 'secondary', backendType: PatternType.CUSTOM, uiOnly: true },
+  ];
 
 const defaultFormValues = { pattern: '', type: PatternType.CUSTOM, description: '' };
 
@@ -351,7 +351,7 @@ const PatternManagement: React.FC = () => {
             </Typography>
             <Typography variant="body2" color="text.secondary" mt={1}>
               Only .txt files. Each line: pattern, comma, type and optional description.<br />
-              <a href="/example-patterns.txt" download>Download example file</a>
+              <a href="/admin-ui/example-patterns.txt" download>Download example file</a>
             </Typography>
           </Box>
           {txtFile && <Typography mt={2}>Selected file: {txtFile.name}</Typography>}

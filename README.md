@@ -1,214 +1,224 @@
-# WAF – Simple Web Application Firewall (Demo)
+# WAF – Web Application Firewall
 
-This is a small, self-contained demo that showcases a reverse-proxy WAF plus an admin dashboard. It’s designed for learning and portfolio review, not production use.
+A self-contained, auth-request style WAF with an admin dashboard built for learning and portfolio purposes.
 
-> Açıklama (TR): Bu proje, BOTAŞ’taki siber güvenlik staj sürecimde, siber güvenlik ekibinin yönlendirmesiyle eğitim ve portföy amaçlı hazırlanmıştır. Gerçek üretim ortamlarında BOTAŞ tarafından kullanılmamaktadır. WAF mantığını uçtan uca anlamak ve kendimi kanıtlamak amacıyla, sınırlı ve anlaşılır bir kapsamda geliştirdim.
-
-> Disclaimer (EN): Built during my cybersecurity internship at BOTAŞ under team guidance as a learning/portfolio project. Not used by BOTAŞ in production. I built it to understand WAF concepts end-to-end and to demonstrate capability.
-
-What’s inside:
-- Reverse-proxy WAF (Python, aiohttp) that inspects requests, bans/whitelists IPs, and proxies traffic
-- Admin API (FastAPI) to manage sites, IPs, patterns, logs, and VirusTotal (VT) cache
-- Admin Web (React + MUI) to control everything visually
+**What's inside:**
+- **Nginx Edge Gateway** — receives all traffic and uses `auth_request` to consult the WAF Engine
+- **WAF Engine** (FastAPI) — inspects requests, bans/whitelists IPs, queues offline analysis (VirusTotal, pattern matching)
+- **Admin API** (FastAPI) — manage sites, IPs, patterns, logs, and VirusTotal cache
+- **Admin Web** (React + MUI) — visual control panel
 
 ---
 
 ## Highlights
 - Request inspection across path, query, headers, and body
-- Pattern-based blocking (XSS / SQL / CUSTOM) sourced from DB (simple substring matching)
-- VirusTotal IP reputation checks with a Redis-backed daily cache
+- Pattern-based blocking (XSS / SQL / CUSTOM) sourced from DB, with advanced encoding bypass normalization
+- VirusTotal IP reputation checks (async, non-blocking)
 - Ban/whitelist stored in Redis (`banned_ip:` / `clean_ip:`)
-- Request/response logging to MongoDB (blocked reason included)
-- Admin API + Admin Web + Docker Compose
+- Inspection logging to MongoDB (decision, pattern analysis, VT result)
+- Fail-open queue design: Nginx always gets a response; deep analysis happens asynchronously
+- Full admin dashboard with Docker Compose
 
 ---
 
-## System Architecture (at a glance)
-```
-[ Client ] → [ WAF (aiohttp) ] → [ Protected Site Frontend/Backend ]
-                      |
-                      |-- Redis (ban/whitelist + VT cache)
-                      |-- MongoDB (request/response logs)
-                      |-- Postgres (sites + malicious patterns)
+## Architecture
 
-[ Admin Web (React) ] → [ Admin API (FastAPI) ] → Postgres / Redis / MongoDB
+```
+                           ┌─────────────────────────┐
+ [ Client ] ──HTTP──────▶  │   Nginx (Edge Gateway)   │
+                           │   port 80                 │
+                           └──────┬──────────┬────────┘
+                                  │          │
+                    auth_request  │          │  proxy_pass
+                    (sub-request) │          │  (on 200)
+                                  ▼          ▼
+                     ┌──────────────┐   ┌──────────────────┐
+                     │  WAF Engine  │   │  Upstream Targets │
+                     │  (FastAPI)   │   │  (your apps)      │
+                     │  :8000       │   └──────────────────┘
+                     └──────┬───┬──┘
+                            │   │
+               ┌────────────┘   └────────────┐
+               ▼                             ▼
+       ┌──────────────┐            ┌──────────────┐
+       │    Redis      │            │   MongoDB     │
+       │ ban/whitelist │            │  inspections  │
+       └──────────────┘            └──────────────┘
+
+ [ Admin Web (React) ] ──▶ [ Admin API (FastAPI) ] ──▶ Postgres / Redis / MongoDB
 ```
 
-- WAF process dynamically spins up listeners per configured site/port and transparently proxies HTTP/WS traffic.
-- Each incoming request is checked in sequence (whitelist → banned → VirusTotal → patterns). First “hit” short-circuits and blocks.
-- All requests/responses (and blocks) are logged to MongoDB for auditing and UI.
+### Request Flow
+
+1. Client HTTP request arrives at **Nginx** (port 80).
+2. Nginx issues an `auth_request` sub-request to the **WAF Engine** (`/inspect`).
+3. The WAF Engine performs **synchronous fast checks** (Redis ban/whitelist lookup):
+   - If the IP is banned → responds `403` → Nginx blocks the request.
+   - If the IP is whitelisted → responds `200` → Nginx forwards to upstream.
+   - Otherwise → responds `200` (fail-open) and **queues** the request for deep analysis.
+4. Nginx routes the traffic to the correct **upstream target** based on `server_name`.
+5. In the background, inspection workers perform:
+   - **Pattern analysis** (XSS, SQL injection, custom patterns with encoding bypass detection)
+   - **VirusTotal IP reputation** check
+   - If a threat is detected → the IP is **banned in Redis** for future requests.
+   - The full inspection result is **logged to MongoDB** (`inspections` collection).
 
 ---
 
-## Repository Structure (short)
+## Repository Structure
 ```
 WAF/
 ├─ api/                    # Admin API (FastAPI)
-│  └─ app/
-│     ├─ core/             # settings, security, dependencies
-│     ├─ database.py       # async engine/session provider
-│     ├─ models.py         # SQLAlchemy models (User, Site, MaliciousPattern)
-│     ├─ routers/          # auth, sites, ips, patterns, system, logs
-│     └─ main.py           # FastAPI app, CORS, lifespan
+│  ├─ app/
+│  │  ├─ core/             # settings, security, dependencies
+│  │  ├─ database.py       # async engine/session provider
+│  │  ├─ models.py         # SQLAlchemy models (User, Site, MaliciousPattern)
+│  │  ├─ routers/          # auth, sites, ips, patterns, system, logs
+│  │  └─ main.py           # FastAPI app entry point
+│  ├─ alembic/             # database migrations
+│  └─ Dockerfile
 │
-├─ waf/                    # WAF runtime (aiohttp)
-│  ├─ app/server.py        # WAFManager (listeners, proxy, orchestration)
+├─ waf/                    # WAF Engine (FastAPI + auth_request)
+│  ├─ app/server.py        # /inspect endpoint, queue workers
 │  ├─ checks/
-│  │  ├─ security_engine.py            # Chain orchestration for request checks
-│  │  └─ patterns/pattern_store.py     # Pattern cache + analysis
-│  ├─ adapters/virustotal/
-│  │  ├─ sync_client.py                # VirusTotal HTTP client (requests)
-│  │  ├─ cache.py                      # Redis-backed daily cache
-│  │  └─ cached_client.py              # Adapter combining client + cache
-│  ├─ integration/
-│  │  ├─ db/{connection.py,repository.py}        # Engine + repositories
-│  │  └─ logging/request_logger.py               # MongoDB logger
-│  ├─ ip/{local.py,banlist.py,ban_actions.py,info_store.py}
-│  ├─ Dockerfile
-│  └─ requirements.txt
+│  │  ├─ inspection_policy.py          # InspectionPolicy dataclass
+│  │  ├─ security_engine.py            # request analysis orchestrator
+│  │  └─ patterns/                     # pattern cache, advanced analyzer, encoders
+│  ├─ ip/                  # ban_actions, banlist, local IP utils
+│  └─ Dockerfile
 │
 ├─ web/                    # Admin Web (React + Vite + MUI)
 │  ├─ src/
-│  │  ├─ api/              # API clients (fetch wrapper)
-│  │  ├─ components/       # IP Mgmt, Pattern Mgmt, Log Viewer, VT Stats, etc.
+│  │  ├─ api/              # fetch wrapper with JWT
+│  │  ├─ components/       # IP Mgmt, Patterns, Logs, VT Stats, Sites
 │  │  ├─ context/          # Auth context
 │  │  └─ App.tsx           # Routes & layout
 │  └─ Dockerfile
 │
-├─ docker-compose.yml      # Full local stack (Postgres, Redis, MongoDB, API, WAF, Web)
-└─ init-db.sql, hosts_entries.txt, etc.
+├─ nginx.conf              # Nginx config with auth_request
+├─ nginx/conf.d/           # per-site upstream configs (add yours here)
+├─ docker-compose.yml      # full local stack
+└─ init-db.sql
 ```
 
 ---
 
-## Data Model (Core)
-- `Site`: port + host mapping with frontend/backend URLs and check toggles (`xss_enabled`, `sql_enabled`, `vt_enabled`)
-- `MaliciousPattern`: `pattern`, `type` (`XSS`/`SQL`/`CUSTOM`), `description`, timestamps
-- `User`: admin users (for Admin Web access) — managed by the API; seeded via migrations
+## Data Model
+| Model | Description |
+|---|---|
+| `Site` | Host mapping with check toggles (`xss_enabled`, `sql_enabled`, `vt_enabled`) |
+| `MaliciousPattern` | `pattern`, `type` (XSS/SQL/CUSTOM), `is_regex`, `is_active`, `description` |
+| `User` | Admin users for the dashboard — seeded via Alembic migrations |
 
-Models live in `api/app/models.py` and are consumed by the WAF runtime.
-
----
-
-## How it works
-- Entrypoint: `python -m waf.app.server`
-- Orchestration: `WAFManager` manages per-port listeners, proxy, and logging
-- Checks: `waf/checks/security_engine.py`
-  1) Whitelist (Redis `clean_ip:<ip>`)
-  2) Banned list (Redis `banned_ip:<ip>`)
-  3) VirusTotal (optional per site) via `CachedVirusTotalClient`
-  4) Pattern scan across body, path, query and headers
-- Ban action: `waf/ip/ban_actions.py` (writes `banned_ip:<ip>` with TTL)
-- Pattern cache: `waf/checks/patterns/pattern_store.py` (TTL fetch from Postgres)
-- Logging: `waf/integration/logging/request_logger.py` stores request/response documents + block reasons in MongoDB
-
-Headers added on proxied responses: `X-WAF-Protected: true`, `X-WAF-Site: <name>`
+Models live in `api/app/models.py`.
 
 ---
 
-## Admin API (FastAPI)
-- App: `api/app/main.py` with CORS, lifespan, and routers
-- Routers: `auth`, `sites`, `ips`, `patterns`, `system`, `logs`
-  - `auth`: login → JWT
-  - `ips`: list/ban/unban, whitelist/unwhitelist
-  - `patterns`: CRUD + bulk upload (text file)
-  - `system`: VT cache stats and cleanup
-  - `logs`: query requests, responses, blocked entries, statistics
+## Admin API
+| Router | Endpoints |
+|---|---|
+| `auth` | Login → JWT token |
+| `sites` | CRUD for protected sites |
+| `ips` | List / ban / unban / whitelist / unwhitelist |
+| `patterns` | CRUD + bulk upload (text file) |
+| `system` | VT cache stats and cleanup |
+| `logs` | Inspection logs, statistics, blocked entries (MongoDB) |
+
+Base path: `/admin-api/v1/`
 
 ---
 
-## Admin Web (React + MUI)
-- Protected routes using simple token presence (stored in localStorage)
-- Key views: Sites, IP Management, Patterns, Logs, VirusTotal Stats
-- Uses `src/api/client.ts` as a lightweight fetch wrapper that injects JWT and handles 401/403 redirects
+## Admin Web
+- Protected routes (JWT in localStorage)
+- Views: Sites, IP Management, Patterns, Logs, VirusTotal Stats
+- Base path: `/admin-ui/`
 
 ---
 
-## Quickstart (Docker Compose)
-Prerequisites: Docker + Docker Compose
+## Quickstart
 
-1) Create `.env` at project root (minimum):
+**Prerequisites:** Docker + Docker Compose
+
+```bash
+# 1. Create external network
+docker network create waf-core-net
+
+# 2. Create .env at project root
+echo 'JWT_SECRET=change-me' > .env
+echo 'VIRUSTOTAL_API_KEY=' >> .env
+
+# 3. Start the stack
+docker compose up --build -d
+
+# 4. Open
+#    Admin UI:  http://localhost/admin-ui/
+#    Admin API: http://localhost/admin-api/v1/docs
 ```
-JWT_SECRET=change-me
-VIRUSTOTAL_API_KEY=
-```
-2) Start the stack:
-```
-docker compose up --build
-```
-3) Open:
-- Admin Web: `http://localhost:5173`
-- Admin API: `http://localhost:8002`
-- WAF (proxy): `http://localhost:80`
 
 ---
 
-## Configuration (common)
-Environment (most common):
-- `DATABASE_URL` (Postgres) — used by both WAF and API
-- `REDIS_URL` — ban/whitelist + VT cache
-- `MONGODB_URL` — request/response logs for WAF and Logs API
-- `VIRUSTOTAL_API_KEY` — optional (enables VT checks per site)
-- `DEBUG`, `POLL_INTERVAL` — WAF runtime behavior
+## Configuration
 
-Site-level toggles (in DB):
-- `xss_enabled`, `sql_enabled`, `vt_enabled`
+**Environment variables:**
+| Variable | Used by | Description |
+|---|---|---|
+| `DATABASE_URL` | API | PostgreSQL connection string |
+| `REDIS_URL` | WAF, API | Redis for ban/whitelist |
+| `MONGODB_URL` | WAF, API | MongoDB for inspection logs |
+| `VIRUSTOTAL_API_KEY` | WAF | Optional — enables VT IP reputation |
+| `JWT_SECRET` | API | JWT signing key |
+| `BAN_TTL_SECONDS` | WAF | How long an IP stays banned (default: 3600) |
+| `INSPECTION_QUEUE_SIZE` | WAF | Max queued inspections (default: 5000) |
+| `INSPECTION_WORKERS` | WAF | Concurrent inspection workers (default: 8) |
 
----
-
-## Typical Request Flow
-1) Client hits WAF listener (port resolved from `Site.port`)
-2) Hostname (exact or wildcard) determines the `Site` configuration
-3) Security checks run in order; on hit → `403` block page with reason
-4) Otherwise proxy proceeds to `frontend_url` or `backend_url` (if path starts with `/api/`)
-5) Request and response are logged to MongoDB with timing
+**Site-level toggles** (per-site in DB): `xss_enabled`, `sql_enabled`, `vt_enabled`
 
 ---
 
-## Adding Protected Sites using Docker DNS
-The WAF can reach backend apps by Docker-internal DNS if both are on the same Docker network.
+## Adding Protected Sites
 
-- Current setup (see `docker-compose.yml`): the WAF service joins these networks:
-  - `waf-core-net` (core infra)
-  - `juiceshop-net` (example vulnerable app network)
-  - `hr-system-net` (my own HR system app network)
+Upstream apps are reached by Nginx via Docker-internal DNS. Both the app and Nginx must share the same Docker network.
 
-- Example 1 — Internal container (Juice Shop):
-  - Run the app on a shared network with an alias (Docker Compose excerpt):
+1. Run your target app on `waf-core-net`:
     ```yaml
     services:
-      juice_shop_app:
-        image: bkimminich/juice-shop
-        environment:
-          - PORT=80
+      my-app:
+        image: my-app-image
         networks:
-          juiceshop-net:
-            aliases: ["juiceshop-internal"]
+          waf-core-net:
+            aliases: ["my-app-internal"]
     networks:
-      juiceshop-net:
+      waf-core-net:
         external: true
     ```
-  - Ensure the WAF service is also attached to `juiceshop-net` (already is in compose).
-  - In Admin Web → Sites, set `frontend_url`/`backend_url` to:
-    - `http://juiceshop-internal/` (Docker DNS resolves this alias).
+2. Add a server block in `nginx/conf.d/my-app.conf`:
+    ```nginx
+    server {
+        listen 80;
+        server_name my-app.local;
 
-- Example 2 — HR System (my own app):
-  - Run your HR system containers on `hr-system-net` and assign service aliases (e.g., `hr-frontend`, `hr-backend`).
-  - Ensure the WAF service is attached to `hr-system-net` (already present).
-  - In Admin Web → Sites, point URLs to `http://hr-frontend/` and/or `http://hr-backend/`.
+        location = /auth-waf {
+            internal;
+            proxy_pass http://waf_auth_engine/inspect;
+            # copy full auth_request config from nginx.conf
+        }
 
-- Example 3 — External site (GitHub):
-  - You can point a site to any public URL (e.g., `https://github.com/`). No shared network needed.
+        location / {
+            auth_request /auth-waf;
+            proxy_pass http://my-app-internal;
+        }
+    }
+    ```
+3. Add `127.0.0.1 my-app.local` to `/etc/hosts`.
+4. Register the site in **Admin Web → Sites** with host `my-app.local`.
+5. Restart nginx: `docker compose restart nginx`
 
-- Pretty hostnames for browser access (optional):
-  - Map hostnames like `juiceshop.local`, `github.local` to `127.0.0.1` in `/etc/hosts`, then add matching `host` values in “Sites.”
-
-Tips
-- To add another internal service, create/attach a network shared with the WAF and use a stable alias; point the site URLs to `http://<alias>/`.
-- If a network doesn’t exist yet: `docker network create <network-name>` and reference it in compose.
+---
 
 ## Troubleshooting
-- WAF container failing to import `waf.*`: ensure Dockerfile copies `./waf/` to `/app/waf/` and entrypoint uses `python -m waf.app.server`
-- VT disabled or rate-limited: VT checks are optional per-site and errors are non-fatal
-- Logs empty: confirm `MONGODB_URL` is reachable and collections are created at startup by the WAF logger
-
+| Symptom | Fix |
+|---|---|
+| WAF fails to import `waf.*` | Ensure Dockerfile copies `./waf/` to `/app/waf/` and CMD is `python -m waf.app.server` |
+| VT checks disabled/failing | VT is optional per-site; errors are non-fatal (fail-open) |
+| Logs empty | Confirm `MONGODB_URL` is reachable; `inspections` collection is auto-created at startup |
+| Nginx returning 500 | Check WAF engine is reachable at `http://waf:8000/inspect` |

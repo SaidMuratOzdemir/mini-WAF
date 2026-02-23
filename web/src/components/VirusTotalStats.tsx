@@ -21,7 +21,7 @@ import {
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
-export const API_URL = '/api/v1';
+
 
 interface CacheStats {
     date: string;
@@ -79,7 +79,7 @@ const VirusTotalStats = () => {
 
     useEffect(() => {
         fetchStats();
-        
+
         // Auto-refresh every 5 minutes
         const interval = setInterval(fetchStats, 5 * 60 * 1000);
         return () => clearInterval(interval);
@@ -124,12 +124,12 @@ const VirusTotalStats = () => {
         return null;
     }
 
-    const maliciousPercentage = stats.total_entries > 0 
-        ? Math.round((stats.malicious_count / stats.total_entries) * 100) 
+    const maliciousPercentage = stats.total_entries > 0
+        ? Math.round((stats.malicious_count / stats.total_entries) * 100)
         : 0;
 
-    const cleanPercentage = stats.total_entries > 0 
-        ? Math.round((stats.clean_count / stats.total_entries) * 100) 
+    const cleanPercentage = stats.total_entries > 0
+        ? Math.round((stats.clean_count / stats.total_entries) * 100)
         : 0;
 
     return (
@@ -164,7 +164,7 @@ const VirusTotalStats = () => {
                             <Typography variant="body2" color="text.secondary">
                                 Malicious IP
                             </Typography>
-                            <Chip 
+                            <Chip
                                 icon={<ErrorIcon />}
                                 label={`${maliciousPercentage}%`}
                                 color="error"
@@ -180,7 +180,7 @@ const VirusTotalStats = () => {
                             <Typography variant="body2" color="text.secondary">
                                 Clean IP
                             </Typography>
-                            <Chip 
+                            <Chip
                                 icon={<CheckIcon />}
                                 label={`${cleanPercentage}%`}
                                 color="success"

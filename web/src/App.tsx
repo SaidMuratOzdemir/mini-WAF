@@ -2,7 +2,7 @@ import { useRef, useCallback, lazy, Suspense } from 'react';
 const IPManagement = lazy(() => import('./components/IPManagement'));
 const LogViewer = lazy(() => import('./components/LogViewer'));
 import { Container, Box } from '@mui/material';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { SiteList, SiteListRef } from './components/SiteList';
 import { SiteForm } from './components/SiteForm';
 import { Login } from './components/Login';
@@ -46,7 +46,7 @@ function SitesPage() {
 
 function App() {
   return (
-    <Router>
+    <BrowserRouter basename="/admin-ui">
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -91,7 +91,7 @@ function App() {
           <Route path="/" element={<Navigate to="/sites" />} />
         </Routes>
       </AuthProvider>
-    </Router>
+    </BrowserRouter>
   );
 }
 

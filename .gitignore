@@ -1,2 +1,23 @@
-.idea
-vulnerable apps
+.idea/
+vulnerable apps/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Environments
+.env
+**/.env
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Node
+node_modules/
+dist/
+build/

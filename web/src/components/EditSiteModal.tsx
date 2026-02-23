@@ -24,11 +24,8 @@ interface EditSiteModalProps {
 
 const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) => {
     const [formData, setFormData] = useState<SiteCreate>({
-        port: 0,
         host: '',
         name: '',
-        frontend_url: '',
-        backend_url: '',
         xss_enabled: true,
         sql_enabled: true,
         vt_enabled: false
@@ -40,11 +37,8 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
     useEffect(() => {
         if (site) {
             setFormData({
-                port: site.port,
                 host: site.host,
                 name: site.name,
-                frontend_url: site.frontend_url,
-                backend_url: site.backend_url,
                 xss_enabled: site.xss_enabled,
                 sql_enabled: site.sql_enabled,
                 vt_enabled: site.vt_enabled
@@ -56,12 +50,10 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
     const handleInputChange = (field: keyof SiteCreate) => (
         event: React.ChangeEvent<HTMLInputElement>
     ) => {
-        const value = event.target.type === 'checkbox' 
-            ? event.target.checked 
-            : event.target.type === 'number' 
-                ? parseInt(event.target.value) || 0
-                : event.target.value;
-        
+        const value = event.target.type === 'checkbox'
+            ? event.target.checked
+            : event.target.value;
+
         setFormData(prev => ({
             ...prev,
             [field]: value
@@ -113,45 +105,14 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
                         disabled={loading}
                     />
 
-                    <Box sx={{ display: 'flex', gap: 2 }}>
-                        <TextField
-                            label="Port"
-                            type="number"
-                            value={formData.port}
-                            onChange={handleInputChange('port')}
-                            required
-                            disabled={loading}
-                            inputProps={{ min: 1, max: 65535 }}
-                        />
-                        <TextField
-                            label="Host"
-                            value={formData.host}
-                            onChange={handleInputChange('host')}
-                            required
-                            disabled={loading}
-                            placeholder="localhost"
-                            sx={{ flex: 1 }}
-                        />
-                    </Box>
-
                     <TextField
-                        label="Frontend URL or IP"
-                        value={formData.frontend_url}
-                        onChange={handleInputChange('frontend_url')}
+                        label="Host"
+                        value={formData.host}
+                        onChange={handleInputChange('host')}
                         fullWidth
                         required
                         disabled={loading}
-                        placeholder="http://host.docker.internal:5174/"
-                    />
-
-                    <TextField
-                        label="Backend URL or IP"
-                        value={formData.backend_url}
-                        onChange={handleInputChange('backend_url')}
-                        fullWidth
-                        required
-                        disabled={loading}
-                        placeholder="http://host.docker.internal:8000/"
+                        placeholder="e.g., app.example.com"
                     />
 
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -192,8 +153,8 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
                 <Button onClick={handleClose} disabled={loading}>
                     Cancel
                 </Button>
-                <Button 
-                    onClick={handleSubmit} 
+                <Button
+                    onClick={handleSubmit}
                     variant="contained"
                     disabled={loading}
                     startIcon={loading ? <CircularProgress size={16} /> : undefined}

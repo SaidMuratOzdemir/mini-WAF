@@ -2,10 +2,6 @@
 
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, UniqueConstraint
 from sqlalchemy.sql import func
-# <<< FIX: REMOVE THE RELATIVE IMPORT
-# from .database import Base
-
-# <<< FIX: ADD THESE TWO LINES TO MAKE THE FILE SELF-CONTAINED
 from sqlalchemy.orm import declarative_base
 Base = declarative_base()
 
@@ -24,18 +20,11 @@ class Site(Base):
     __tablename__ = "sites"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    port = Column(Integer, nullable=False)
-    host = Column(String, nullable=False)
+    host = Column(String, nullable=False, unique=True)
     name = Column(String, nullable=False)
-    frontend_url = Column(String, nullable=False)
-    backend_url = Column(String, nullable=False)
     xss_enabled = Column(Boolean, default=True)
     sql_enabled = Column(Boolean, default=True)
     vt_enabled = Column(Boolean, default=False)
-
-    __table_args__ = (
-        UniqueConstraint('port', 'host', name='unique_port_host'),
-    )
 
 
 class MaliciousPattern(Base):
@@ -44,5 +33,7 @@ class MaliciousPattern(Base):
     pattern = Column(String, nullable=False, index=True)
     type = Column(String, nullable=False, index=True)
     description = Column(String, nullable=True)
+    is_regex = Column(Boolean, default=False, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

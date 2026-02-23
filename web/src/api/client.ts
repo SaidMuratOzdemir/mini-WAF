@@ -1,5 +1,5 @@
 // Merkezi API client
-const BASE_URL = '/api/v1';
+const BASE_URL = '/admin-api/v1';
 
 export async function apiFetch<T = any>(path: string, options: RequestInit = {}) {
   const token = localStorage.getItem('token');
@@ -15,7 +15,7 @@ export async function apiFetch<T = any>(path: string, options: RequestInit = {})
   const response = await fetch(`${BASE_URL}${path}`, { ...options, headers });
   if (response.status === 401 || response.status === 403) {
     localStorage.removeItem('token');
-    window.location.href = '/login';
+    window.location.href = '/admin-ui/login';
     throw new Error('Session expired, please log in again.');
   }
   if (!response.ok) {

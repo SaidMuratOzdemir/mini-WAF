@@ -11,7 +11,6 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
 
-export const API_URL = '/api';
 
 export function Login() {
     const [username, setUsername] = useState('');

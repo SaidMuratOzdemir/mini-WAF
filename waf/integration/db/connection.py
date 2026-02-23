@@ -3,7 +3,11 @@ import logging
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from models import Base
+
+try:
+    from models import Base
+except ImportError:  # Local-dev fallback when models.py is not copied to project root
+    from api.app.models import Base
 
 load_dotenv()
 
@@ -19,16 +23,3 @@ engine = create_async_engine(
 )
 
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-
-async def init_database():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logging.info("Database initialized.")
-
-
-async def get_session() -> AsyncSession:
-    async with AsyncSessionLocal() as session:
-        yield session
-
-

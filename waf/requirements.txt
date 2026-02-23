@@ -1,9 +1,8 @@
-aiohttp==3.9.1
+fastapi==0.116.1
+uvicorn==0.35.0
+httpx==0.28.1
 redis==5.0.1
 sqlalchemy==2.0.23
 asyncpg==0.28.0
 python-dotenv==1.0.0
-requests==2.31.0
-psycopg2-binary==2.9.9
-setuptools==69.0.3
 pymongo==4.13.2
