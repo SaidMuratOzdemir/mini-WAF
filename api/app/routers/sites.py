@@ -10,7 +10,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from app.database import get_session
-from app.models import Site as SiteModel
+from app.models import Site as SiteModel, Certificate as CertificateModel
 from app.schemas import SiteCreate, Site as SiteSchema, UserInDB
 from app.core.security import get_current_admin_user
 from app.services.nginx_config_manager import NginxConfigManager, NginxConfigApplyError
@@ -24,16 +24,70 @@ router = APIRouter(prefix="/sites", tags=["Sites"])
 nginx_config_manager = NginxConfigManager()
 
 
-async def sync_site_proxy_config_hook(site: SiteModel, operation: str) -> None:
+def _normalize_tls_sni_override(override: str | None) -> str | None:
+    if not override:
+        return None
+    normalized = validate_server_name(override)
+    if normalized.startswith("[") and normalized.endswith("]"):
+        return normalized[1:-1]
+    return normalized
+
+
+async def get_default_certificate(session: AsyncSession) -> CertificateModel | None:
+    result = await session.execute(
+        select(CertificateModel)
+        .where(CertificateModel.is_default.is_(True))
+        .order_by(CertificateModel.id.desc())
+    )
+    return result.scalars().first()
+
+
+async def resolve_site_tls_certificate(
+    session: AsyncSession,
+    site_payload: SiteCreate | SiteModel,
+) -> CertificateModel | None:
+    if not getattr(site_payload, "tls_enabled", False):
+        return None
+
+    certificate_id = getattr(site_payload, "tls_certificate_id", None)
+    if certificate_id:
+        certificate = await session.get(CertificateModel, certificate_id)
+        if not certificate:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="TLS enabled site requires a valid certificate selection.",
+            )
+        return certificate
+
+    default_certificate = await get_default_certificate(session)
+    if not default_certificate:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="TLS enabled site requires a certificate; no default certificate is configured.",
+        )
+    return default_certificate
+
+
+async def sync_site_proxy_config_hook(
+    site: SiteModel,
+    operation: str,
+    certificate: CertificateModel | None = None,
+) -> None:
     """
     Sync rendered site configs to generated Nginx snippets directory.
     """
     try:
-        result = await run_in_threadpool(nginx_config_manager.apply_with_rollback, site, operation)
+        result = await run_in_threadpool(
+            nginx_config_manager.apply_with_rollback,
+            site,
+            operation,
+            certificate,
+        )
         logger.info("Synced Nginx config for site change", extra={
             "site_id": getattr(site, "id", None),
             "host": getattr(site, "host", None),
             "operation": operation,
+            "certificate_id": getattr(certificate, "id", None) if certificate else None,
             "sync_result": result,
         })
     except NginxConfigApplyError as exc:
@@ -106,8 +160,11 @@ async def create_site(
     try:
         validated_host = validate_server_name(site.host)
         upstream_result = await run_in_threadpool(validate_upstream_url, site.upstream_url)
+        validated_sni_override = _normalize_tls_sni_override(site.upstream_tls_server_name_override)
     except UpstreamValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+    tls_certificate = await resolve_site_tls_certificate(session, site)
 
     existing = await session.execute(
         select(SiteModel).filter_by(host=validated_host)
@@ -121,12 +178,13 @@ async def create_site(
     site_data = site.model_dump()
     site_data["host"] = validated_host
     site_data["upstream_url"] = upstream_result.normalized_url
+    site_data["upstream_tls_server_name_override"] = validated_sni_override
     new_site = SiteModel(**site_data)
     session.add(new_site)
     try:
         await session.flush()
         await session.refresh(new_site)
-        await sync_site_proxy_config_hook(new_site, "create")
+        await sync_site_proxy_config_hook(new_site, "create", tls_certificate)
         await session.commit()
     except Exception:
         await session.rollback()
@@ -148,8 +206,11 @@ async def update_site(
     try:
         validated_host = validate_server_name(site_update.host)
         upstream_result = await run_in_threadpool(validate_upstream_url, site_update.upstream_url)
+        validated_sni_override = _normalize_tls_sni_override(site_update.upstream_tls_server_name_override)
     except UpstreamValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+    tls_certificate = await resolve_site_tls_certificate(session, site_update)
 
     db_site = await session.get(SiteModel, site_id)
     if not db_site:
@@ -168,12 +229,13 @@ async def update_site(
     update_data = site_update.model_dump()
     update_data["host"] = validated_host
     update_data["upstream_url"] = upstream_result.normalized_url
+    update_data["upstream_tls_server_name_override"] = validated_sni_override
     for key, value in update_data.items():
         setattr(db_site, key, value)
 
     try:
         await session.flush()
-        await sync_site_proxy_config_hook(db_site, "update")
+        await sync_site_proxy_config_hook(db_site, "update", tls_certificate)
         await session.commit()
     except Exception:
         await session.rollback()

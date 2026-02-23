@@ -8,7 +8,7 @@ import { Add, Delete, Edit, UploadFile, Search } from '@mui/icons-material';
 import { useForm, Controller } from 'react-hook-form';
 import { useDropzone } from 'react-dropzone';
 import debounce from 'lodash.debounce';
-import { Pattern, PatternCreate, PatternUpdate, PatternType } from '../types/Pattern';
+import { Pattern, PatternCreate, PatternType } from '../types/Pattern';
 import { getPatterns, addPattern, addPatternsFromTxt, updatePattern, deletePattern, PatternUploadResult } from '../api/patterns';
 
 // Base types supported by backend
@@ -424,4 +424,4 @@ const PatternManagement: React.FC = () => {
   );
 };
 
-export default PatternManagement; 
+export default PatternManagement;

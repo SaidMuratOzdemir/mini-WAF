@@ -68,8 +68,11 @@ services:
       - NGINX_CONTROL_BASE_URL=${NGINX_CONTROL_BASE_URL:-http://nginx-control:8081}
       - NGINX_COMMAND_TIMEOUT_SECONDS=${NGINX_COMMAND_TIMEOUT_SECONDS:-15}
       - ALLOW_PRIVATE_UPSTREAMS=${ALLOW_PRIVATE_UPSTREAMS:-false}
+      - CERT_STORAGE_DIR=${CERT_STORAGE_DIR:-/shared/certs}
+      - NGINX_UPSTREAM_CA_BUNDLE_PATH=${NGINX_UPSTREAM_CA_BUNDLE_PATH:-/etc/ssl/certs/ca-certificates.crt}
     volumes:
       - nginx_generated_configs:/shared/nginx/generated
+      - nginx_cert_store:/shared/certs
     depends_on:
       - postgres
       - redis
@@ -125,11 +128,13 @@ services:
     image: nginx:1.27-alpine
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - nginx_generated_configs:/etc/nginx/conf.d/generated
       - nginx_runtime:/var/run
+      - nginx_cert_store:/shared/certs:ro
     depends_on:
       - waf
       - api
@@ -150,6 +155,7 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - nginx_generated_configs:/etc/nginx/conf.d/generated
       - nginx_runtime:/var/run
+      - nginx_cert_store:/shared/certs:ro
     depends_on:
       - nginx
     pid: "service:nginx"
@@ -162,6 +168,7 @@ volumes:
   mongodb_data:
   nginx_generated_configs:
   nginx_runtime:
+  nginx_cert_store:
 
 networks:
   waf-core-net:

@@ -1,4 +1,4 @@
-import { useRef, useCallback, lazy, Suspense } from 'react';
+import { useRef, useCallback, useState, lazy, Suspense } from 'react';
 const IPManagement = lazy(() => import('./components/IPManagement'));
 const LogViewer = lazy(() => import('./components/LogViewer'));
 import { Container, Box } from '@mui/material';
@@ -9,6 +9,7 @@ import { Login } from './components/Login';
 import VirusTotalStats from './components/VirusTotalStats';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import PatternManagement from './components/PatternManagement';
+import CertificateManager from './components/CertificateManager';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { checkAuth } = useAuth();
@@ -22,6 +23,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function SitesPage() {
   const siteListRef = useRef<SiteListRef>(null);
+  const [certRefreshToken, setCertRefreshToken] = useState(0);
 
   const handleSiteAdded = useCallback(() => {
     console.log('handleSiteAdded called, forcing refresh');
@@ -31,12 +33,17 @@ function SitesPage() {
     }
   }, []);
 
+  const handleCertificatesChanged = useCallback(() => {
+    setCertRefreshToken((prev) => prev + 1);
+  }, []);
+
   return (
     <Container>
       <Box sx={{ mb: 4 }}>
         <VirusTotalStats />
       </Box>
-      <SiteForm onSiteAdded={handleSiteAdded} />
+      <CertificateManager onCertificatesChanged={handleCertificatesChanged} />
+      <SiteForm onSiteAdded={handleSiteAdded} certRefreshToken={certRefreshToken} />
       <Box sx={{ mt: 4 }}>
         <SiteList ref={siteListRef} />
       </Box>

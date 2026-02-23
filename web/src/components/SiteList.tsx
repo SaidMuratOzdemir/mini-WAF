@@ -47,16 +47,12 @@ function getComparator<T>(
         : (a, b) => -descendingComparator(a, b, orderBy);
 }
 
-interface SiteListProps {
-    onRefreshRequest?: () => void;
-}
-
 export interface SiteListRef {
     refresh: () => void;
 }
 
-export const SiteList = forwardRef<SiteListRef, SiteListProps>(
-    ({ onRefreshRequest }, ref) => {
+export const SiteList = forwardRef<SiteListRef>(
+    (_props, ref) => {
         const [sites, setSites] = useState<Site[]>([]);
         const [error, setError] = useState<string>('');
         const [loading, setLoading] = useState(true);

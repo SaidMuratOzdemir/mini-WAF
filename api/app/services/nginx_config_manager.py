@@ -62,6 +62,10 @@ class NginxConfigManager:
         self.validate_command = list(validate_command or self._read_command_from_env("NGINX_TEST_COMMAND", "/bin/true"))
         self.reload_command = list(reload_command or self._read_command_from_env("NGINX_RELOAD_COMMAND", "/bin/true"))
         self.command_timeout_seconds = int(os.getenv("NGINX_COMMAND_TIMEOUT_SECONDS", str(command_timeout_seconds)))
+        self.upstream_ca_bundle_path = os.getenv(
+            "NGINX_UPSTREAM_CA_BUNDLE_PATH",
+            "/etc/ssl/certs/ca-certificates.crt",
+        )
 
         self.generated_config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -103,8 +107,39 @@ class NginxConfigManager:
             return hostname
         return f"{hostname}:{parsed_url.port}"
 
-    def _template_context(self, site) -> dict[str, object]:
+    @staticmethod
+    def _normalize_upstream_ssl_name(value: str | None) -> str | None:
+        if not value:
+            return None
+        if value.startswith("[") and value.endswith("]"):
+            return value[1:-1]
+        return value
+
+    def _validate_tls_certificate_assets(self, certificate) -> None:
+        cert_path = Path(certificate.cert_pem_path)
+        key_path = Path(certificate.key_pem_path)
+        chain_path = Path(certificate.chain_pem_path) if certificate.chain_pem_path else None
+
+        if not cert_path.is_file():
+            raise ValueError(f"TLS certificate file not found: {cert_path}")
+        if not key_path.is_file():
+            raise ValueError(f"TLS private key file not found: {key_path}")
+        if chain_path and not chain_path.is_file():
+            raise ValueError(f"TLS certificate chain file not found: {chain_path}")
+
+    def _template_context(self, site, certificate=None) -> dict[str, object]:
         parsed_url = urlsplit(site.upstream_url)
+        tls_enabled = bool(getattr(site, "tls_enabled", False))
+        if tls_enabled and not certificate:
+            raise ValueError("TLS is enabled for site but no certificate was provided.")
+        if tls_enabled and certificate:
+            self._validate_tls_certificate_assets(certificate)
+
+        upstream_override = self._normalize_upstream_ssl_name(
+            getattr(site, "upstream_tls_server_name_override", None)
+        )
+        upstream_ssl_name = upstream_override or (parsed_url.hostname or "")
+
         return {
             "site_host": site.host,
             "upstream_url": site.upstream_url,
@@ -112,17 +147,25 @@ class NginxConfigManager:
             "upstream_host_header": self._format_upstream_host_header(parsed_url),
             "is_https_upstream": parsed_url.scheme == "https",
             "enable_sni": bool(site.enable_sni),
-            "upstream_ssl_name": parsed_url.hostname or "",
+            "upstream_ssl_name": upstream_ssl_name,
+            "upstream_tls_verify": bool(getattr(site, "upstream_tls_verify", True)),
+            "upstream_ca_bundle_path": self.upstream_ca_bundle_path,
             "websocket_enabled": bool(site.websocket_enabled),
+            "tls_enabled": tls_enabled,
+            "http_redirect_to_https": bool(getattr(site, "http_redirect_to_https", False)),
+            "hsts_enabled": bool(getattr(site, "hsts_enabled", False)),
+            "tls_cert_path": certificate.cert_pem_path if certificate else "",
+            "tls_key_path": certificate.key_pem_path if certificate else "",
+            "tls_chain_path": certificate.chain_pem_path if certificate else None,
         }
 
     def _site_config_candidates(self, site_id: int) -> Iterable[Path]:
         pattern = f"*-site-{site_id}-*.conf"
         return sorted(self.generated_config_dir.glob(pattern))
 
-    def render_site_config(self, site) -> str:
+    def render_site_config(self, site, certificate=None) -> str:
         template = self._jinja.get_template(self.template_path.name)
-        rendered = template.render(**self._template_context(site))
+        rendered = template.render(**self._template_context(site, certificate))
         return rendered.strip() + "\n"
 
     def get_site_config_path(self, site) -> Path:
@@ -145,12 +188,12 @@ class NginxConfigManager:
             temp_path = Path(tmp_file.name)
         os.replace(temp_path, path)
 
-    def write_site_config_atomic(self, site) -> Path:
+    def write_site_config_atomic(self, site, certificate=None) -> Path:
         if not getattr(site, "id", None):
             raise ValueError("Site must have an id before config generation.")
 
         target_path = self.get_site_config_path(site)
-        config_content = self.render_site_config(site)
+        config_content = self.render_site_config(site, certificate)
 
         self._write_file_atomic(target_path, config_content.encode("utf-8"))
         self._cleanup_stale_site_configs(site.id, target_path)
@@ -168,7 +211,7 @@ class NginxConfigManager:
             removed_paths.append(candidate)
         return removed_paths
 
-    def sync_site_config(self, site, operation: str) -> dict[str, object]:
+    def sync_site_config(self, site, operation: str, certificate=None) -> dict[str, object]:
         operation = operation.lower()
         if operation not in {"create", "update", "delete"}:
             raise ValueError(f"Unsupported sync operation: {operation}")
@@ -181,7 +224,7 @@ class NginxConfigManager:
             removed = self.delete_site_config(site)
             return {"operation": operation, "removed": [str(path) for path in removed], "inactive": True}
 
-        written_path = self.write_site_config_atomic(site)
+        written_path = self.write_site_config_atomic(site, certificate)
         return {"operation": operation, "written": str(written_path)}
 
     def _run_command(self, command: Sequence[str]) -> CommandResult:
@@ -233,7 +276,7 @@ class NginxConfigManager:
         for path, content in snapshot.items():
             self._write_file_atomic(path, content)
 
-    def apply_with_rollback(self, site, operation: str) -> dict[str, object]:
+    def apply_with_rollback(self, site, operation: str, certificate=None) -> dict[str, object]:
         site_id = getattr(site, "id", None)
         if not site_id:
             raise ValueError("Site must have an id before apply_with_rollback.")
@@ -242,7 +285,7 @@ class NginxConfigManager:
         sync_result: dict[str, object] | None = None
 
         try:
-            sync_result = self.sync_site_config(site, operation)
+            sync_result = self.sync_site_config(site, operation, certificate)
             validate_result = self.validate_nginx_config()
             if not validate_result.ok:
                 self._restore_site_state(site_id, before_state)

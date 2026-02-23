@@ -10,10 +10,13 @@ import {
     Switch,
     Box,
     Alert,
-    CircularProgress
+    CircularProgress,
+    MenuItem
 } from '@mui/material';
 import type { Site, SiteCreate } from '../types/Site';
 import { updateSite } from '../api/sites';
+import type { Certificate } from '../types/Certificate';
+import { fetchCertificates } from '../api/certificates';
 
 interface EditSiteModalProps {
     open: boolean;
@@ -23,6 +26,7 @@ interface EditSiteModalProps {
 }
 
 const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) => {
+    const [certificates, setCertificates] = useState<Certificate[]>([]);
     const [formData, setFormData] = useState<SiteCreate>({
         host: '',
         name: '',
@@ -32,6 +36,12 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
         enable_sni: true,
         websocket_enabled: true,
         body_inspection_profile: 'default',
+        tls_enabled: false,
+        http_redirect_to_https: false,
+        tls_certificate_id: null,
+        upstream_tls_verify: true,
+        upstream_tls_server_name_override: null,
+        hsts_enabled: false,
         xss_enabled: true,
         sql_enabled: true,
         vt_enabled: false
@@ -40,6 +50,18 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
     const [error, setError] = useState<string | null>(null);
 
     // Reset form when site changes
+    useEffect(() => {
+        const loadCertificates = async () => {
+            try {
+                const data = await fetchCertificates();
+                setCertificates(data);
+            } catch (e) {
+                console.error('Failed to load certificates', e);
+            }
+        };
+        void loadCertificates();
+    }, []);
+
     useEffect(() => {
         if (site) {
             setFormData({
@@ -51,6 +73,12 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
                 enable_sni: site.enable_sni,
                 websocket_enabled: site.websocket_enabled,
                 body_inspection_profile: site.body_inspection_profile,
+                tls_enabled: site.tls_enabled,
+                http_redirect_to_https: site.http_redirect_to_https,
+                tls_certificate_id: site.tls_certificate_id,
+                upstream_tls_verify: site.upstream_tls_verify,
+                upstream_tls_server_name_override: site.upstream_tls_server_name_override,
+                hsts_enabled: site.hsts_enabled,
                 xss_enabled: site.xss_enabled,
                 sql_enabled: site.sql_enabled,
                 vt_enabled: site.vt_enabled
@@ -62,14 +90,25 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
     const handleInputChange = (field: keyof SiteCreate) => (
         event: React.ChangeEvent<HTMLInputElement>
     ) => {
-        const value = event.target.type === 'checkbox'
+        const rawValue = event.target.type === 'checkbox'
             ? event.target.checked
             : event.target.value;
+        const value = field === 'tls_certificate_id'
+            ? (rawValue ? Number(rawValue) : null)
+            : (field === 'upstream_tls_server_name_override' ? (rawValue || null) : rawValue);
 
-        setFormData(prev => ({
-            ...prev,
-            [field]: value
-        }));
+        setFormData(prev => {
+            const next: SiteCreate = {
+                ...prev,
+                [field]: value
+            } as SiteCreate;
+            if (field === 'tls_enabled' && value === false) {
+                next.http_redirect_to_https = false;
+                next.hsts_enabled = false;
+                next.tls_certificate_id = null;
+            }
+            return next;
+        });
     };
 
     const handleSubmit = async () => {
@@ -147,6 +186,34 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
                         placeholder="default"
                     />
 
+                    <TextField
+                        select
+                        fullWidth
+                        label="TLS Certificate"
+                        value={formData.tls_certificate_id ?? ''}
+                        onChange={handleInputChange('tls_certificate_id')}
+                        disabled={loading || !formData.tls_enabled}
+                        helperText={!formData.tls_enabled ? 'Enable TLS to select a certificate.' : 'Leave empty to use default certificate.'}
+                    >
+                        <MenuItem value="">
+                            Use Default Certificate
+                        </MenuItem>
+                        {certificates.map((certificate) => (
+                            <MenuItem key={certificate.id} value={certificate.id}>
+                                {certificate.name}{certificate.is_default ? ' (default)' : ''}
+                            </MenuItem>
+                        ))}
+                    </TextField>
+
+                    <TextField
+                        label="Upstream TLS SNI Override (Optional)"
+                        value={formData.upstream_tls_server_name_override ?? ''}
+                        onChange={handleInputChange('upstream_tls_server_name_override')}
+                        fullWidth
+                        disabled={loading || !formData.tls_enabled}
+                        placeholder="e.g., upstream.example.com"
+                    />
+
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                         <FormControlLabel
                             control={
@@ -187,6 +254,46 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
                                 />
                             }
                             label="WebSocket Enabled"
+                        />
+                        <FormControlLabel
+                            control={
+                                <Switch
+                                    checked={formData.tls_enabled}
+                                    onChange={handleInputChange('tls_enabled')}
+                                    disabled={loading}
+                                />
+                            }
+                            label="TLS Enabled"
+                        />
+                        <FormControlLabel
+                            control={
+                                <Switch
+                                    checked={formData.http_redirect_to_https}
+                                    onChange={handleInputChange('http_redirect_to_https')}
+                                    disabled={loading || !formData.tls_enabled}
+                                />
+                            }
+                            label="HTTP -> HTTPS Redirect"
+                        />
+                        <FormControlLabel
+                            control={
+                                <Switch
+                                    checked={formData.upstream_tls_verify}
+                                    onChange={handleInputChange('upstream_tls_verify')}
+                                    disabled={loading || !formData.tls_enabled}
+                                />
+                            }
+                            label="Upstream TLS Verify"
+                        />
+                        <FormControlLabel
+                            control={
+                                <Switch
+                                    checked={formData.hsts_enabled}
+                                    onChange={handleInputChange('hsts_enabled')}
+                                    disabled={loading || !formData.tls_enabled}
+                                />
+                            }
+                            label="HSTS Enabled"
                         />
                     </Box>
 

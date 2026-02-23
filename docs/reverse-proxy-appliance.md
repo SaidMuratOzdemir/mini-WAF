@@ -1,11 +1,11 @@
 # Reverse Proxy WAF Appliance
 
-This project now supports dynamic reverse-proxy site onboarding from Admin UI/API.
+This project now supports dynamic reverse-proxy site onboarding from Admin UI/API, including per-site TLS termination.
 
 ## Runtime Flow
 
 When a site is created/updated/deleted:
-1. Site config is validated (`host`, `upstream_url`, SSRF policy).
+1. Site config is validated (`host`, `upstream_url`, TLS and SSRF policy).
 2. Site record is flushed in DB transaction scope.
 3. Nginx per-site config is rendered to generated volume.
 4. Nginx config validation (`nginx -t`) is triggered through `nginx-control` helper.
@@ -21,6 +21,26 @@ Request path:
 - LAN/private target: `http://192.168.1.20:8080`
 - Public HTTPS target: `https://httpbin.org`
 
+## TLS / HTTPS
+
+Site-level TLS options:
+- `tls_enabled`
+- `http_redirect_to_https`
+- `tls_certificate_id` (or default certificate if empty)
+- `upstream_tls_verify`
+- `upstream_tls_server_name_override`
+- `hsts_enabled`
+
+Certificate management:
+- Upload certificate PEM + private key PEM (optional chain PEM) from Admin UI.
+- Files are stored under certificate storage volume (`/shared/certs` in containers).
+- Private keys are written with strict file permissions.
+
+HTTPS flow:
+- HTTP `:80` can redirect to HTTPS if `http_redirect_to_https=true`.
+- HTTPS `:443` terminates TLS in nginx and continues `auth_request` flow to WAF.
+- Upstream HTTPS can enable/disable verify and override SNI name.
+
 ## Security Policy
 
 - Allowed schemes: `http`, `https`
@@ -34,6 +54,9 @@ Request path:
 - `nginx_generated_configs` named volume is shared:
   - API writes to `/shared/nginx/generated`
   - Nginx reads `/etc/nginx/conf.d/generated`
+- `nginx_cert_store` named volume is shared:
+  - API writes certificates to `/shared/certs`
+  - Nginx and nginx-control read `/shared/certs` (read-only)
 - `nginx-control` helper service validates and reloads nginx safely.
 - API uses command client script:
   - `python /app/app/services/nginx_control_client.py validate`
@@ -42,10 +65,27 @@ Request path:
 ## Deployment Notes (VM)
 
 1. Point domain DNS A/AAAA to VM IP.
-2. Open inbound `80` (and `443` when TLS termination is added).
+2. Open inbound `80` and `443`.
 3. Start stack: `docker compose up -d --build`.
-4. Add sites from Admin UI (`/admin-ui/`) with host + upstream URL.
-5. Set `ALLOW_PRIVATE_UPSTREAMS=true` only if private/LAN upstreams are required.
+4. Upload certificate(s) from Admin UI (`/admin-ui/`), set default if desired.
+5. Add sites with host + upstream URL + TLS options.
+6. Enable HTTP->HTTPS redirect for production-facing domains.
+7. Enable HSTS only after HTTPS behavior is validated for the domain.
+8. Set `ALLOW_PRIVATE_UPSTREAMS=true` only if private/LAN upstreams are required.
+
+## Environment Variables
+
+- `ALLOW_PRIVATE_UPSTREAMS` (default `false`)
+- `CERT_STORAGE_DIR` (default `/shared/certs`)
+- `NGINX_GENERATED_CONFIG_DIR` (default `/shared/nginx/generated`)
+- `NGINX_CONTROL_BASE_URL` (default `http://nginx-control:8081`)
+- `NGINX_UPSTREAM_CA_BUNDLE_PATH` (default `/etc/ssl/certs/ca-certificates.crt`)
+
+## Notes
+
+- This phase does not implement automated ACME/Let's Encrypt provisioning.
+- Certificate rotation automation and wildcard certificate automation are out of scope.
+- DNS rebinding full mitigation remains a follow-up hardening task.
 
 ## Non-Goals (This Phase)
 
