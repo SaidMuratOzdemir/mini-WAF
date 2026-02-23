@@ -4,11 +4,17 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from typing import Optional, List
 from datetime import datetime
+import ipaddress
+import re
 from urllib.parse import urlsplit
 
 BODY_INSPECTION_PROFILES = {"strict", "default", "headers_only", "upload_friendly", "custom"}
 PROXY_REDIRECT_MODES = {"default", "off", "rewrite_to_public_host"}
 WAF_DECISION_MODES = {"fail_open", "fail_close"}
+FORWARD_PROXY_DEFAULT_ACTIONS = {"allow", "deny"}
+FORWARD_PROXY_RULE_ACTIONS = {"allow", "deny"}
+FORWARD_PROXY_RULE_TYPES = {"domain_exact", "domain_suffix", "host_exact", "cidr", "port"}
+HOSTNAME_RE = re.compile(r"^[a-z0-9.-]+$")
 
 # --- Token Schemas ---
 class TokenResponse(BaseModel):
@@ -191,6 +197,188 @@ class AuditLogOut(BaseModel):
     ip_address: Optional[str] = None
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class OutboundProxyProfileBase(BaseModel):
+    name: str
+    listen_port: int = 3128
+    is_enabled: bool = False
+    require_auth: bool = False
+    allow_connect_ports: str = "443,563"
+    allowed_client_cidrs: Optional[str] = None
+    default_action: str = "deny"
+
+    @field_validator("name")
+    def validate_name(cls, v):
+        value = v.strip()
+        if not value:
+            raise ValueError("Profile name cannot be empty")
+        if len(value) > 128:
+            raise ValueError("Profile name is too long")
+        return value
+
+    @field_validator("listen_port")
+    def validate_listen_port(cls, v):
+        if v < 1 or v > 65535:
+            raise ValueError("listen_port must be between 1 and 65535")
+        return v
+
+    @field_validator("allow_connect_ports")
+    def validate_allow_connect_ports(cls, v):
+        raw = v.strip()
+        if not raw:
+            raise ValueError("allow_connect_ports cannot be empty")
+        normalized_ports: list[str] = []
+        for token in raw.split(","):
+            candidate = token.strip()
+            if not candidate:
+                continue
+            port = int(candidate)
+            if port < 1 or port > 65535:
+                raise ValueError("CONNECT port must be between 1 and 65535")
+            normalized_ports.append(str(port))
+        if not normalized_ports:
+            raise ValueError("allow_connect_ports must include at least one port")
+        deduplicated = sorted(set(normalized_ports), key=int)
+        return ",".join(deduplicated)
+
+    @field_validator("allowed_client_cidrs")
+    def validate_allowed_client_cidrs(cls, v):
+        if v is None:
+            return None
+        raw = v.strip()
+        if not raw:
+            return None
+
+        normalized: list[str] = []
+        for token in raw.split(","):
+            candidate = token.strip()
+            if not candidate:
+                continue
+            network = ipaddress.ip_network(candidate, strict=False)
+            normalized.append(str(network))
+        if not normalized:
+            return None
+        return ",".join(sorted(set(normalized)))
+
+    @field_validator("default_action")
+    def validate_default_action(cls, v):
+        normalized = v.strip().lower()
+        if normalized not in FORWARD_PROXY_DEFAULT_ACTIONS:
+            raise ValueError("default_action must be allow or deny")
+        return normalized
+
+    @field_validator("require_auth")
+    def validate_require_auth(cls, v):
+        if v:
+            raise ValueError("require_auth=true is not supported in phase-9a")
+        return v
+
+
+class OutboundProxyProfileCreate(OutboundProxyProfileBase):
+    pass
+
+
+class OutboundProxyProfileUpdate(OutboundProxyProfileBase):
+    pass
+
+
+class OutboundProxyProfileOut(OutboundProxyProfileBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OutboundDestinationRuleBase(BaseModel):
+    action: str
+    rule_type: str
+    value: str
+    priority: int = 100
+    is_enabled: bool = True
+
+    @field_validator("action")
+    def validate_rule_action(cls, v):
+        normalized = v.strip().lower()
+        if normalized not in FORWARD_PROXY_RULE_ACTIONS:
+            raise ValueError("action must be allow or deny")
+        return normalized
+
+    @field_validator("rule_type")
+    def validate_rule_type(cls, v):
+        normalized = v.strip().lower()
+        if normalized not in FORWARD_PROXY_RULE_TYPES:
+            raise ValueError("rule_type must be one of domain_exact/domain_suffix/host_exact/cidr/port")
+        return normalized
+
+    @field_validator("value")
+    def validate_rule_value_non_empty(cls, v):
+        value = v.strip()
+        if not value:
+            raise ValueError("Rule value cannot be empty")
+        return value
+
+    @field_validator("priority")
+    def validate_priority(cls, v):
+        if v < 0 or v > 1_000_000:
+            raise ValueError("priority must be between 0 and 1000000")
+        return v
+
+    @model_validator(mode="after")
+    def validate_rule_value_by_type(self):
+        value = self.value.strip()
+        if self.rule_type == "domain_exact":
+            normalized = value.lower().rstrip(".")
+            if not HOSTNAME_RE.match(normalized):
+                raise ValueError("domain_exact contains invalid characters")
+            self.value = normalized
+        elif self.rule_type == "domain_suffix":
+            normalized = value.lower().lstrip(".").rstrip(".")
+            if not HOSTNAME_RE.match(normalized):
+                raise ValueError("domain_suffix contains invalid characters")
+            self.value = f".{normalized}"
+        elif self.rule_type == "host_exact":
+            normalized = value.lower().rstrip(".")
+            try:
+                parsed_ip = ipaddress.ip_address(normalized)
+                self.value = str(parsed_ip)
+            except ValueError:
+                if not HOSTNAME_RE.match(normalized):
+                    raise ValueError("host_exact must be a valid hostname or IP")
+                self.value = normalized
+        elif self.rule_type == "cidr":
+            self.value = str(ipaddress.ip_network(value, strict=False))
+        elif self.rule_type == "port":
+            port = int(value)
+            if port < 1 or port > 65535:
+                raise ValueError("port rule value must be between 1 and 65535")
+            self.value = str(port)
+        return self
+
+
+class OutboundDestinationRuleCreate(OutboundDestinationRuleBase):
+    pass
+
+
+class OutboundDestinationRuleUpdate(OutboundDestinationRuleBase):
+    pass
+
+
+class OutboundDestinationRuleOut(OutboundDestinationRuleBase):
+    id: int
+    profile_id: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ForwardProxyStatusOut(BaseModel):
+    active_profile_id: Optional[int] = None
+    active_profile_name: Optional[str] = None
+    active_rule_count: int = 0
+    config_path: str
+    validation: dict[str, object]
+
 
 # --- Malicious Pattern Schemas ---
 class MaliciousPatternBase(BaseModel):

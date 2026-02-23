@@ -64,6 +64,35 @@ class Certificate(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class OutboundProxyProfile(Base):
+    __tablename__ = "outbound_proxy_profiles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False, unique=True)
+    listen_port = Column(Integer, default=3128, nullable=False)
+    is_enabled = Column(Boolean, default=False, nullable=False)
+    require_auth = Column(Boolean, default=False, nullable=False)
+    allow_connect_ports = Column(String, default="443,563", nullable=False)
+    allowed_client_cidrs = Column(String, nullable=True)
+    default_action = Column(String, default="deny", nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class OutboundDestinationRule(Base):
+    __tablename__ = "outbound_destination_rules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    profile_id = Column(Integer, ForeignKey("outbound_proxy_profiles.id", ondelete="CASCADE"), nullable=False)
+    action = Column(String, nullable=False)
+    rule_type = Column(String, nullable=False)
+    value = Column(String, nullable=False)
+    priority = Column(Integer, default=100, nullable=False)
+    is_enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class UpstreamPolicy(Base):
     __tablename__ = "upstream_policies"
 

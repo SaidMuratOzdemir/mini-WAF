@@ -76,13 +76,21 @@ services:
       - ALLOWED_HOSTNAME_SUFFIXES=${ALLOWED_HOSTNAME_SUFFIXES:-}
       - CERT_STORAGE_DIR=${CERT_STORAGE_DIR:-/shared/certs}
       - NGINX_UPSTREAM_CA_BUNDLE_PATH=${NGINX_UPSTREAM_CA_BUNDLE_PATH:-/etc/ssl/certs/ca-certificates.crt}
+      - FORWARD_PROXY_GENERATED_CONFIG_PATH=${FORWARD_PROXY_GENERATED_CONFIG_PATH:-/shared/forward-proxy/generated/squid.conf}
+      - FORWARD_PROXY_TEST_COMMAND=python /app/app/services/forward_proxy_control_client.py validate
+      - FORWARD_PROXY_RELOAD_COMMAND=python /app/app/services/forward_proxy_control_client.py reload
+      - FORWARD_PROXY_CONTROL_BASE_URL=${FORWARD_PROXY_CONTROL_BASE_URL:-http://forward-proxy-control:8082}
+      - FORWARD_PROXY_CONTROL_TOKEN=${FORWARD_PROXY_CONTROL_TOKEN:-change-me-forward-proxy-control-token}
+      - FORWARD_PROXY_COMMAND_TIMEOUT_SECONDS=${FORWARD_PROXY_COMMAND_TIMEOUT_SECONDS:-15}
     volumes:
       - nginx_generated_configs:/shared/nginx/generated
       - nginx_cert_store:/shared/certs
+      - forward_proxy_generated_configs:/shared/forward-proxy/generated
     depends_on:
       - postgres
       - redis
       - mongodb
+      - forward-proxy-control
     networks:
       - waf-core-net
       - waf-control-net
@@ -129,6 +137,43 @@ services:
       - "8080"
     networks:
       - waf-core-net
+    restart: unless-stopped
+
+  forward-proxy:
+    build:
+      context: ./forward-proxy
+      dockerfile: Dockerfile
+    ports:
+      - "3128:3128"
+    environment:
+      - FORWARD_PROXY_CONFIG_PATH=${FORWARD_PROXY_CONFIG_PATH:-/etc/squid/generated/squid.conf}
+    volumes:
+      - forward_proxy_generated_configs:/etc/squid/generated
+      - forward_proxy_runtime:/var/run/squid
+      - forward_proxy_logs:/var/log/squid
+    networks:
+      - waf-core-net
+    restart: unless-stopped
+
+  forward-proxy-control:
+    build:
+      context: ./forward-proxy-control
+      dockerfile: Dockerfile
+    expose:
+      - "8082"
+    environment:
+      - FORWARD_PROXY_CONTROL_TOKEN=${FORWARD_PROXY_CONTROL_TOKEN:-change-me-forward-proxy-control-token}
+      - FORWARD_PROXY_CONTROL_COOLDOWN_SECONDS=${FORWARD_PROXY_CONTROL_COOLDOWN_SECONDS:-0}
+      - FORWARD_PROXY_CONFIG_PATH=${FORWARD_PROXY_CONFIG_PATH:-/etc/squid/generated/squid.conf}
+    volumes:
+      - forward_proxy_generated_configs:/etc/squid/generated
+      - forward_proxy_runtime:/var/run/squid
+    depends_on:
+      - forward-proxy
+    pid: "service:forward-proxy"
+    networks:
+      - waf-core-net
+      - waf-control-net
     restart: unless-stopped
 
   nginx:
@@ -180,6 +225,9 @@ volumes:
   nginx_generated_configs:
   nginx_runtime:
   nginx_cert_store:
+  forward_proxy_generated_configs:
+  forward_proxy_runtime:
+  forward_proxy_logs:
 
 networks:
   waf-core-net:

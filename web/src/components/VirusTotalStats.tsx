@@ -227,6 +227,14 @@ const VirusTotalStats = () => {
                         >
                             Logs
                         </Button>
+                        <Button
+                            variant="contained"
+                            color="primary"
+                            startIcon={<ManageIcon />}
+                            onClick={() => navigate('/forward-proxy')}
+                        >
+                            Outbound Proxy
+                        </Button>
 
                         <Button
                             variant="outlined"

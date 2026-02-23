@@ -1,6 +1,7 @@
 # Reverse Proxy WAF Appliance
 
 This project now supports dynamic reverse-proxy site onboarding from Admin UI/API, including per-site TLS termination and control-plane hardening.
+It also includes a separate explicit forward proxy plane (Phase 9A) for outbound traffic.
 
 ## Runtime Flow
 
@@ -14,6 +15,9 @@ When a site is created/updated/deleted:
 
 Request path:
 `client -> nginx -> auth_request(/auth-waf) -> waf -> upstream`
+
+Explicit outbound path (Phase 9A):
+`proxy-configured client -> forward-proxy(squid) -> internet`
 
 ## Upstream URL Examples
 
@@ -135,6 +139,12 @@ Each entry stores actor, action, target, success/failure, request IP, and timest
 - API uses command client script:
   - `python /app/app/services/nginx_control_client.py validate`
   - `python /app/app/services/nginx_control_client.py reload`
+- `forward_proxy_generated_configs` named volume is shared:
+  - API writes generated Squid config to `/shared/forward-proxy/generated/squid.conf`
+  - Forward proxy reads `/etc/squid/generated/squid.conf`
+- `forward-proxy-control` helper validates/reloads Squid with token auth:
+  - `python /app/app/services/forward_proxy_control_client.py validate`
+  - `python /app/app/services/forward_proxy_control_client.py reload`
 
 ## Deployment Notes (VM)
 
@@ -161,6 +171,11 @@ Each entry stores actor, action, target, success/failure, request IP, and timest
 - `NGINX_CONTROL_TOKEN` (required shared secret for API<->helper)
 - `NGINX_CONTROL_COOLDOWN_SECONDS` (default `0`, set to `1`/`2` for cooldown)
 - `NGINX_UPSTREAM_CA_BUNDLE_PATH` (default `/etc/ssl/certs/ca-certificates.crt`)
+- `FORWARD_PROXY_GENERATED_CONFIG_PATH` (default `/shared/forward-proxy/generated/squid.conf`)
+- `FORWARD_PROXY_CONTROL_BASE_URL` (default `http://forward-proxy-control:8082`)
+- `FORWARD_PROXY_CONTROL_TOKEN` (required shared secret for API<->forward-proxy-control)
+- `FORWARD_PROXY_CONTROL_COOLDOWN_SECONDS` (default `0`)
+- `FORWARD_PROXY_COMMAND_TIMEOUT_SECONDS` (default `15`)
 
 ## Notes
 
@@ -172,7 +187,6 @@ Each entry stores actor, action, target, success/failure, request IP, and timest
 
 ## Non-Goals (This Phase)
 
-- Explicit forward proxy / CONNECT proxy
 - TLS MITM / CA distribution
 - Full DNS rebinding protection
 - Response body inspection

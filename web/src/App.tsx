@@ -10,6 +10,7 @@ import VirusTotalStats from './components/VirusTotalStats';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import PatternManagement from './components/PatternManagement';
 import CertificateManager from './components/CertificateManager';
+import OutboundProxyManagement from './components/OutboundProxyManagement';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { checkAuth } = useAuth();
@@ -99,6 +100,14 @@ function App() {
                 <Suspense fallback={<div>Loading...</div>}>
                   <LogViewer />
                 </Suspense>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/forward-proxy"
+            element={
+              <ProtectedRoute>
+                <OutboundProxyManagement />
               </ProtectedRoute>
             }
           />
