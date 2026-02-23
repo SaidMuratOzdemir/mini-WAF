@@ -4,6 +4,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, List
 from datetime import datetime
+from urllib.parse import urlsplit
 
 # --- Token Schemas ---
 class TokenResponse(BaseModel):
@@ -26,6 +27,12 @@ class UserInDB(UserBase):
 class SiteBase(BaseModel):
     name: str
     host: str = Field(..., description='Host header to match (e.g., "api.example.com")')
+    upstream_url: str = Field(..., description='Upstream URL (http/https) to proxy requests to')
+    is_active: bool = True
+    preserve_host_header: bool = False
+    enable_sni: bool = True
+    websocket_enabled: bool = True
+    body_inspection_profile: str = "default"
     xss_enabled: bool = True
     sql_enabled: bool = True
     vt_enabled: bool = False
@@ -35,6 +42,24 @@ class SiteBase(BaseModel):
         if not v or v.isspace():
             raise ValueError("Host cannot be empty")
         return v.lower()
+
+    @field_validator('upstream_url')
+    def validate_upstream_url(cls, v):
+        if not v or v.isspace():
+            raise ValueError("Upstream URL cannot be empty")
+
+        parsed = urlsplit(v.strip())
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("Upstream URL scheme must be http or https")
+        if not parsed.netloc:
+            raise ValueError("Upstream URL must include a host")
+        return v.strip()
+
+    @field_validator('body_inspection_profile')
+    def validate_body_inspection_profile(cls, v):
+        if not v or v.isspace():
+            raise ValueError("Body inspection profile cannot be empty")
+        return v.strip()
 
 class SiteCreate(SiteBase):
     pass

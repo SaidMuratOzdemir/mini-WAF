@@ -16,6 +16,18 @@ from app.core.security import get_current_admin_user
 router = APIRouter(prefix="/sites", tags=["Sites"])
 
 
+async def sync_site_proxy_config_hook(site: SiteModel, operation: str) -> None:
+    """
+    Phase-1 placeholder for Nginx config sync.
+    Phase-2 wires this into the real config manager.
+    """
+    logger.debug("Site proxy config sync hook is pending implementation", extra={
+        "site_id": getattr(site, "id", None),
+        "host": getattr(site, "host", None),
+        "operation": operation,
+    })
+
+
 async def check_external_site_health(host: str) -> str:
     """Check if a site is healthy by making HTTP request through Nginx edge."""
     try:
@@ -80,6 +92,7 @@ async def create_site(
     session.add(new_site)
     await session.commit()
     await session.refresh(new_site)
+    await sync_site_proxy_config_hook(new_site, "create")
 
     return new_site
 
@@ -112,6 +125,7 @@ async def update_site(
 
     await session.commit()
     await session.refresh(db_site)
+    await sync_site_proxy_config_hook(db_site, "update")
 
     return db_site
 
@@ -127,5 +141,7 @@ async def delete_site(
     if not db_site:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Site with ID {site_id} not found.")
 
+    deleted_site = db_site
     await session.delete(db_site)
     await session.commit()
+    await sync_site_proxy_config_hook(deleted_site, "delete")

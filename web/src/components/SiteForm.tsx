@@ -10,7 +10,7 @@ import {
     Alert,
     Stack
 } from '@mui/material';
-import type { Site } from '../types/Site';
+import type { SiteCreate } from '../types/Site';
 import { addSite } from '../api/sites';
 
 interface SiteFormProps {
@@ -18,10 +18,15 @@ interface SiteFormProps {
 }
 
 export function SiteForm({ onSiteAdded }: SiteFormProps) {
-    const [formData, setFormData] = useState<Site>({
-        id: 0, // Will be set by backend
+    const [formData, setFormData] = useState<SiteCreate>({
         host: '',
         name: '',
+        upstream_url: '',
+        is_active: true,
+        preserve_host_header: false,
+        enable_sni: true,
+        websocket_enabled: true,
+        body_inspection_profile: 'default',
         xss_enabled: true,
         sql_enabled: true,
         vt_enabled: false
@@ -38,17 +43,23 @@ export function SiteForm({ onSiteAdded }: SiteFormProps) {
             if (!formData.host.trim()) {
                 throw new Error('Host field is required');
             }
+            if (!formData.upstream_url.trim()) {
+                throw new Error('Upstream URL is required');
+            }
 
-            // Exclude id field for API call since it's auto-generated
-            const { id, ...siteData } = formData;
-            await addSite(siteData);
+            await addSite(formData);
             onSiteAdded();
 
             // Reset form
             setFormData({
-                id: 0,
                 host: '',
                 name: '',
+                upstream_url: '',
+                is_active: true,
+                preserve_host_header: false,
+                enable_sni: true,
+                websocket_enabled: true,
+                body_inspection_profile: 'default',
                 xss_enabled: true,
                 sql_enabled: true,
                 vt_enabled: false
@@ -108,6 +119,72 @@ export function SiteForm({ onSiteAdded }: SiteFormProps) {
                         onChange={handleChange}
                         placeholder="e.g., app.example.com"
                     />
+
+                    <TextField
+                        required
+                        fullWidth
+                        label="Upstream URL"
+                        name="upstream_url"
+                        value={formData.upstream_url}
+                        onChange={handleChange}
+                        placeholder="e.g., http://app-internal:8080"
+                    />
+
+                    <TextField
+                        required
+                        fullWidth
+                        label="Body Inspection Profile"
+                        name="body_inspection_profile"
+                        value={formData.body_inspection_profile}
+                        onChange={handleChange}
+                        placeholder="default"
+                    />
+
+                    <Box sx={{ display: 'flex', gap: 2 }}>
+                        <FormControlLabel
+                            control={
+                                <Switch
+                                    checked={formData.is_active}
+                                    onChange={handleSwitchChange}
+                                    name="is_active"
+                                />
+                            }
+                            label="Active"
+                        />
+
+                        <FormControlLabel
+                            control={
+                                <Switch
+                                    checked={formData.preserve_host_header}
+                                    onChange={handleSwitchChange}
+                                    name="preserve_host_header"
+                                />
+                            }
+                            label="Preserve Host Header"
+                        />
+
+                        <FormControlLabel
+                            control={
+                                <Switch
+                                    checked={formData.enable_sni}
+                                    onChange={handleSwitchChange}
+                                    name="enable_sni"
+                                />
+                            }
+                            label="Enable SNI"
+                        />
+
+                        <FormControlLabel
+                            control={
+                                <Switch
+                                    checked={formData.websocket_enabled}
+                                    onChange={handleSwitchChange}
+                                    name="websocket_enabled"
+                                />
+                            }
+                            label="WebSocket Enabled"
+                        />
+                    </Box>
 
                     <Box sx={{ display: 'flex', gap: 2 }}>
                         <FormControlLabel
