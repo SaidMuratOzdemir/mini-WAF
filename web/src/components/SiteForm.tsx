@@ -48,7 +48,16 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0, currentUserRole = 
         preserve_host_header: false,
         enable_sni: true,
         websocket_enabled: true,
+        sse_enabled: false,
         body_inspection_profile: 'default',
+        client_max_body_size_mb: null,
+        proxy_request_buffering: null,
+        proxy_read_timeout_sec: 60,
+        proxy_send_timeout_sec: 60,
+        proxy_connect_timeout_sec: 10,
+        proxy_redirect_mode: 'default',
+        cookie_rewrite_enabled: false,
+        waf_decision_mode: 'fail_close',
         tls_enabled: false,
         http_redirect_to_https: false,
         tls_certificate_id: null,
@@ -60,6 +69,7 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0, currentUserRole = 
         vt_enabled: false
     });
     const [error, setError] = useState<string>('');
+    const upstreamIsHttps = formData.upstream_url.trim().toLowerCase().startsWith('https://');
 
     useEffect(() => {
         if (currentUserRole !== 'super_admin') {
@@ -90,6 +100,12 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0, currentUserRole = 
             if (!formData.upstream_url.trim()) {
                 throw new Error('Upstream URL is required');
             }
+            if (formData.proxy_read_timeout_sec < 1 || formData.proxy_send_timeout_sec < 1 || formData.proxy_connect_timeout_sec < 1) {
+                throw new Error('Proxy timeout değerleri 1 saniyeden büyük olmalıdır.');
+            }
+            if (formData.client_max_body_size_mb !== null && (formData.client_max_body_size_mb < 1 || formData.client_max_body_size_mb > 1024)) {
+                throw new Error('Body size 1..1024 MB aralığında olmalıdır.');
+            }
             if (currentUserRole !== 'super_admin' && isLikelyPrivateUpstream(formData.upstream_url)) {
                 throw new Error('Private/LAN upstream tanımı yalnızca super_admin rolü için izinlidir.');
             }
@@ -109,7 +125,16 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0, currentUserRole = 
                 preserve_host_header: false,
                 enable_sni: true,
                 websocket_enabled: true,
+                sse_enabled: false,
                 body_inspection_profile: 'default',
+                client_max_body_size_mb: null,
+                proxy_request_buffering: null,
+                proxy_read_timeout_sec: 60,
+                proxy_send_timeout_sec: 60,
+                proxy_connect_timeout_sec: 10,
+                proxy_redirect_mode: 'default',
+                cookie_rewrite_enabled: false,
+                waf_decision_mode: 'fail_close',
                 tls_enabled: false,
                 http_redirect_to_https: false,
                 tls_certificate_id: null,
@@ -131,6 +156,12 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0, currentUserRole = 
         const { name, value } = e.target;
         const normalizedValue = name === 'tls_certificate_id'
             ? (value ? Number(value) : null)
+            : name === 'client_max_body_size_mb'
+                ? (value ? Number(value) : null)
+                : name === 'proxy_read_timeout_sec' || name === 'proxy_send_timeout_sec' || name === 'proxy_connect_timeout_sec'
+                    ? Number(value)
+                    : name === 'proxy_request_buffering'
+                        ? (value === '' ? null : value === 'true')
             : (name === 'upstream_tls_server_name_override' ? (value || null) : value);
         setFormData(prev => ({
             ...prev,
@@ -205,14 +236,18 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0, currentUserRole = 
                     )}
 
                     <TextField
-                        required
+                        select
                         fullWidth
                         label="Body Inspection Profile"
                         name="body_inspection_profile"
                         value={formData.body_inspection_profile}
                         onChange={handleChange}
-                        placeholder="default"
-                    />
+                    >
+                        <MenuItem value="strict">strict</MenuItem>
+                        <MenuItem value="default">default</MenuItem>
+                        <MenuItem value="headers_only">headers_only</MenuItem>
+                        <MenuItem value="upload_friendly">upload_friendly</MenuItem>
+                    </TextField>
 
                     <Typography variant="subtitle1">TLS / HTTPS</Typography>
 
@@ -242,7 +277,7 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0, currentUserRole = 
                         name="upstream_tls_server_name_override"
                         value={formData.upstream_tls_server_name_override ?? ''}
                         onChange={handleChange}
-                        disabled={!formData.tls_enabled}
+                        disabled={!upstreamIsHttps}
                         placeholder="e.g., upstream.example.com"
                     />
 
@@ -290,6 +325,16 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0, currentUserRole = 
                             }
                             label="WebSocket Enabled"
                         />
+                        <FormControlLabel
+                            control={
+                                <Switch
+                                    checked={formData.sse_enabled}
+                                    onChange={handleSwitchChange}
+                                    name="sse_enabled"
+                                />
+                            }
+                            label="SSE Enabled"
+                        />
                     </Box>
 
                     <Box sx={{ display: 'flex', gap: 2 }}>
@@ -322,7 +367,7 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0, currentUserRole = 
                                     checked={formData.upstream_tls_verify}
                                     onChange={handleSwitchChange}
                                     name="upstream_tls_verify"
-                                    disabled={!formData.tls_enabled}
+                                    disabled={!upstreamIsHttps}
                                 />
                             }
                             label="Upstream TLS Verify"
@@ -341,7 +386,98 @@ export function SiteForm({ onSiteAdded, certRefreshToken = 0, currentUserRole = 
                         />
                     </Box>
 
+                    <Typography variant="subtitle1">Advanced Proxy Settings</Typography>
+
+                    <TextField
+                        type="number"
+                        fullWidth
+                        label="Client Max Body Size (MB, empty=profile default)"
+                        name="client_max_body_size_mb"
+                        value={formData.client_max_body_size_mb ?? ''}
+                        onChange={handleChange}
+                        inputProps={{ min: 1, max: 1024 }}
+                    />
+
+                    <TextField
+                        select
+                        fullWidth
+                        label="Proxy Request Buffering"
+                        name="proxy_request_buffering"
+                        value={formData.proxy_request_buffering === null ? '' : String(formData.proxy_request_buffering)}
+                        onChange={handleChange}
+                    >
+                        <MenuItem value="">Profile Default</MenuItem>
+                        <MenuItem value="true">on</MenuItem>
+                        <MenuItem value="false">off</MenuItem>
+                    </TextField>
+
                     <Box sx={{ display: 'flex', gap: 2 }}>
+                        <TextField
+                            type="number"
+                            fullWidth
+                            label="Proxy Read Timeout (sec)"
+                            name="proxy_read_timeout_sec"
+                            value={formData.proxy_read_timeout_sec}
+                            onChange={handleChange}
+                            inputProps={{ min: 1, max: 3600 }}
+                        />
+                        <TextField
+                            type="number"
+                            fullWidth
+                            label="Proxy Send Timeout (sec)"
+                            name="proxy_send_timeout_sec"
+                            value={formData.proxy_send_timeout_sec}
+                            onChange={handleChange}
+                            inputProps={{ min: 1, max: 3600 }}
+                        />
+                        <TextField
+                            type="number"
+                            fullWidth
+                            label="Proxy Connect Timeout (sec)"
+                            name="proxy_connect_timeout_sec"
+                            value={formData.proxy_connect_timeout_sec}
+                            onChange={handleChange}
+                            inputProps={{ min: 1, max: 3600 }}
+                        />
+                    </Box>
+
+                    <TextField
+                        select
+                        fullWidth
+                        label="Proxy Redirect Mode"
+                        name="proxy_redirect_mode"
+                        value={formData.proxy_redirect_mode}
+                        onChange={handleChange}
+                    >
+                        <MenuItem value="default">default</MenuItem>
+                        <MenuItem value="off">off</MenuItem>
+                        <MenuItem value="rewrite_to_public_host">rewrite_to_public_host</MenuItem>
+                    </TextField>
+
+                    <TextField
+                        select
+                        fullWidth
+                        label="WAF Decision Mode"
+                        name="waf_decision_mode"
+                        value={formData.waf_decision_mode}
+                        onChange={handleChange}
+                    >
+                        <MenuItem value="fail_close">fail_close</MenuItem>
+                        <MenuItem value="fail_open">fail_open</MenuItem>
+                    </TextField>
+
+                    <Box sx={{ display: 'flex', gap: 2 }}>
+                        <FormControlLabel
+                            control={
+                                <Switch
+                                    checked={formData.cookie_rewrite_enabled}
+                                    onChange={handleSwitchChange}
+                                    name="cookie_rewrite_enabled"
+                                />
+                            }
+                            label="Cookie Rewrite Enabled"
+                        />
+
                         <FormControlLabel
                             control={
                                 <Switch

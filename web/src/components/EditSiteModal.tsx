@@ -26,6 +26,22 @@ interface EditSiteModalProps {
     onSuccess: () => void;
 }
 
+function isLikelyPrivateUpstream(rawUrl: string): boolean {
+    try {
+        const parsed = new URL(rawUrl.trim());
+        const host = parsed.hostname.toLowerCase();
+        if (host === 'localhost' || host.endsWith('.local')) return true;
+        if (/^127\./.test(host)) return true;
+        if (host === '::1') return true;
+        if (/^10\./.test(host)) return true;
+        if (/^192\.168\./.test(host)) return true;
+        if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)) return true;
+        return false;
+    } catch {
+        return false;
+    }
+}
+
 const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) => {
     const { role } = useAuth();
     const [certificates, setCertificates] = useState<Certificate[]>([]);
@@ -37,7 +53,16 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
         preserve_host_header: false,
         enable_sni: true,
         websocket_enabled: true,
+        sse_enabled: false,
         body_inspection_profile: 'default',
+        client_max_body_size_mb: null,
+        proxy_request_buffering: null,
+        proxy_read_timeout_sec: 60,
+        proxy_send_timeout_sec: 60,
+        proxy_connect_timeout_sec: 10,
+        proxy_redirect_mode: 'default',
+        cookie_rewrite_enabled: false,
+        waf_decision_mode: 'fail_close',
         tls_enabled: false,
         http_redirect_to_https: false,
         tls_certificate_id: null,
@@ -78,7 +103,16 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
                 preserve_host_header: site.preserve_host_header,
                 enable_sni: site.enable_sni,
                 websocket_enabled: site.websocket_enabled,
+                sse_enabled: site.sse_enabled,
                 body_inspection_profile: site.body_inspection_profile,
+                client_max_body_size_mb: site.client_max_body_size_mb,
+                proxy_request_buffering: site.proxy_request_buffering,
+                proxy_read_timeout_sec: site.proxy_read_timeout_sec,
+                proxy_send_timeout_sec: site.proxy_send_timeout_sec,
+                proxy_connect_timeout_sec: site.proxy_connect_timeout_sec,
+                proxy_redirect_mode: site.proxy_redirect_mode,
+                cookie_rewrite_enabled: site.cookie_rewrite_enabled,
+                waf_decision_mode: site.waf_decision_mode,
                 tls_enabled: site.tls_enabled,
                 http_redirect_to_https: site.http_redirect_to_https,
                 tls_certificate_id: site.tls_certificate_id,
@@ -101,7 +135,13 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
             : event.target.value;
         const value = field === 'tls_certificate_id'
             ? (rawValue ? Number(rawValue) : null)
-            : (field === 'upstream_tls_server_name_override' ? (rawValue || null) : rawValue);
+            : field === 'client_max_body_size_mb'
+                ? (rawValue ? Number(rawValue) : null)
+                : field === 'proxy_read_timeout_sec' || field === 'proxy_send_timeout_sec' || field === 'proxy_connect_timeout_sec'
+                    ? Number(rawValue)
+                    : field === 'proxy_request_buffering'
+                        ? (rawValue === '' ? null : rawValue === 'true')
+                        : (field === 'upstream_tls_server_name_override' ? (rawValue || null) : rawValue);
 
         setFormData(prev => {
             const next: SiteCreate = {
@@ -119,6 +159,42 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
 
     const handleSubmit = async () => {
         if (!site) return;
+
+        if (!formData.name.trim()) {
+            setError('Site name is required.');
+            return;
+        }
+        if (!formData.host.trim()) {
+            setError('Host field is required.');
+            return;
+        }
+        if (!formData.upstream_url.trim()) {
+            setError('Upstream URL is required.');
+            return;
+        }
+        if (
+            formData.proxy_read_timeout_sec < 1
+            || formData.proxy_send_timeout_sec < 1
+            || formData.proxy_connect_timeout_sec < 1
+        ) {
+            setError('Proxy timeout değerleri 1 saniyeden büyük olmalıdır.');
+            return;
+        }
+        if (
+            formData.client_max_body_size_mb !== null
+            && (formData.client_max_body_size_mb < 1 || formData.client_max_body_size_mb > 1024)
+        ) {
+            setError('Body size 1..1024 MB aralığında olmalıdır.');
+            return;
+        }
+        if (role !== 'super_admin' && isLikelyPrivateUpstream(formData.upstream_url)) {
+            setError('Private/LAN upstream tanımı yalnızca super_admin rolü için izinlidir.');
+            return;
+        }
+        if (formData.tls_enabled && !formData.tls_certificate_id && certificates.length === 0) {
+            setError('TLS enabled requires a certificate (upload one or configure a default).');
+            return;
+        }
 
         setLoading(true);
         setError(null);
@@ -139,6 +215,7 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
             onClose();
         }
     };
+    const upstreamIsHttps = formData.upstream_url.trim().toLowerCase().startsWith('https://');
 
     return (
         <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
@@ -183,14 +260,19 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
                     />
 
                     <TextField
+                        select
                         label="Body Inspection Profile"
                         value={formData.body_inspection_profile}
                         onChange={handleInputChange('body_inspection_profile')}
                         fullWidth
                         required
                         disabled={loading}
-                        placeholder="default"
-                    />
+                    >
+                        <MenuItem value="strict">strict</MenuItem>
+                        <MenuItem value="default">default</MenuItem>
+                        <MenuItem value="headers_only">headers_only</MenuItem>
+                        <MenuItem value="upload_friendly">upload_friendly</MenuItem>
+                    </TextField>
 
                     <TextField
                         select
@@ -216,7 +298,7 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
                         value={formData.upstream_tls_server_name_override ?? ''}
                         onChange={handleInputChange('upstream_tls_server_name_override')}
                         fullWidth
-                        disabled={loading || !formData.tls_enabled}
+                        disabled={loading || !upstreamIsHttps}
                         placeholder="e.g., upstream.example.com"
                     />
 
@@ -264,6 +346,16 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
                         <FormControlLabel
                             control={
                                 <Switch
+                                    checked={formData.sse_enabled}
+                                    onChange={handleInputChange('sse_enabled')}
+                                    disabled={loading}
+                                />
+                            }
+                            label="SSE Enabled"
+                        />
+                        <FormControlLabel
+                            control={
+                                <Switch
                                     checked={formData.tls_enabled}
                                     onChange={handleInputChange('tls_enabled')}
                                     disabled={loading}
@@ -286,7 +378,7 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
                                 <Switch
                                     checked={formData.upstream_tls_verify}
                                     onChange={handleInputChange('upstream_tls_verify')}
-                                    disabled={loading || !formData.tls_enabled}
+                                    disabled={loading || !upstreamIsHttps}
                                 />
                             }
                             label="Upstream TLS Verify"
@@ -303,7 +395,95 @@ const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) =
                         />
                     </Box>
 
+                    <TextField
+                        type="number"
+                        fullWidth
+                        label="Client Max Body Size (MB, empty=profile default)"
+                        value={formData.client_max_body_size_mb ?? ''}
+                        onChange={handleInputChange('client_max_body_size_mb')}
+                        disabled={loading}
+                        inputProps={{ min: 1, max: 1024 }}
+                    />
+
+                    <TextField
+                        select
+                        fullWidth
+                        label="Proxy Request Buffering"
+                        value={formData.proxy_request_buffering === null ? '' : String(formData.proxy_request_buffering)}
+                        onChange={handleInputChange('proxy_request_buffering')}
+                        disabled={loading}
+                    >
+                        <MenuItem value="">Profile Default</MenuItem>
+                        <MenuItem value="true">on</MenuItem>
+                        <MenuItem value="false">off</MenuItem>
+                    </TextField>
+
+                    <Box sx={{ display: 'flex', gap: 2 }}>
+                        <TextField
+                            type="number"
+                            fullWidth
+                            label="Proxy Read Timeout (sec)"
+                            value={formData.proxy_read_timeout_sec}
+                            onChange={handleInputChange('proxy_read_timeout_sec')}
+                            disabled={loading}
+                            inputProps={{ min: 1, max: 3600 }}
+                        />
+                        <TextField
+                            type="number"
+                            fullWidth
+                            label="Proxy Send Timeout (sec)"
+                            value={formData.proxy_send_timeout_sec}
+                            onChange={handleInputChange('proxy_send_timeout_sec')}
+                            disabled={loading}
+                            inputProps={{ min: 1, max: 3600 }}
+                        />
+                        <TextField
+                            type="number"
+                            fullWidth
+                            label="Proxy Connect Timeout (sec)"
+                            value={formData.proxy_connect_timeout_sec}
+                            onChange={handleInputChange('proxy_connect_timeout_sec')}
+                            disabled={loading}
+                            inputProps={{ min: 1, max: 3600 }}
+                        />
+                    </Box>
+
+                    <TextField
+                        select
+                        fullWidth
+                        label="Proxy Redirect Mode"
+                        value={formData.proxy_redirect_mode}
+                        onChange={handleInputChange('proxy_redirect_mode')}
+                        disabled={loading}
+                    >
+                        <MenuItem value="default">default</MenuItem>
+                        <MenuItem value="off">off</MenuItem>
+                        <MenuItem value="rewrite_to_public_host">rewrite_to_public_host</MenuItem>
+                    </TextField>
+
+                    <TextField
+                        select
+                        fullWidth
+                        label="WAF Decision Mode"
+                        value={formData.waf_decision_mode}
+                        onChange={handleInputChange('waf_decision_mode')}
+                        disabled={loading}
+                    >
+                        <MenuItem value="fail_close">fail_close</MenuItem>
+                        <MenuItem value="fail_open">fail_open</MenuItem>
+                    </TextField>
+
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <FormControlLabel
+                            control={
+                                <Switch
+                                    checked={formData.cookie_rewrite_enabled}
+                                    onChange={handleInputChange('cookie_rewrite_enabled')}
+                                    disabled={loading}
+                                />
+                            }
+                            label="Cookie Rewrite Enabled"
+                        />
                         <FormControlLabel
                             control={
                                 <Switch

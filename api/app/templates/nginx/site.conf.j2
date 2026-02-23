@@ -1,22 +1,22 @@
-server {
-    listen 80;
-    server_name {{ site_host }};
-
-{% if tls_enabled and http_redirect_to_https %}
-    location / {
-        return 301 https://$host$request_uri;
-    }
-{% else %}
+{% macro waf_auth_location() -%}
     location = /auth-waf {
         internal;
 
         proxy_pass http://waf_auth_engine/inspect;
         proxy_method POST;
 
+        proxy_set_header X-WAF-Inspection-Profile {{ body_inspection_profile }};
+
+{% if waf_forward_body %}
         proxy_pass_request_body on;
         proxy_set_body $request_body;
         proxy_set_header Content-Length $content_length;
         proxy_set_header Content-Type $content_type;
+{% else %}
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Content-Type "";
+{% endif %}
 
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Real-IP $remote_addr;
@@ -29,8 +29,18 @@ server {
         proxy_set_header X-Request-ID $request_id;
 
         proxy_set_header Host $host;
-    }
 
+{% if waf_fail_open %}
+        proxy_intercept_errors on;
+        error_page 500 502 503 504 = @waf_allow;
+{% else %}
+        proxy_intercept_errors on;
+        error_page 500 502 503 504 = @waf_forbidden;
+{% endif %}
+    }
+{%- endmacro %}
+
+{% macro proxy_location() -%}
     location / {
         auth_request /auth-waf;
         error_page 401 = @waf_forbidden;
@@ -38,6 +48,11 @@ server {
 
         proxy_pass {{ upstream_url }};
         proxy_http_version 1.1;
+
+        proxy_connect_timeout {{ proxy_connect_timeout_sec }}s;
+        proxy_send_timeout {{ proxy_send_timeout_sec }}s;
+        proxy_read_timeout {{ proxy_read_timeout_sec }}s;
+        proxy_request_buffering {% if proxy_request_buffering %}on{% else %}off{% endif %};
 
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Real-IP $remote_addr;
@@ -56,6 +71,22 @@ server {
 {% else %}
         proxy_set_header Connection "";
 {% endif %}
+{% if sse_enabled %}
+        proxy_buffering off;
+        proxy_cache off;
+        add_header X-Accel-Buffering no;
+{% endif %}
+{% if proxy_redirect_mode == "off" %}
+        proxy_redirect off;
+{% elif proxy_redirect_mode == "rewrite_to_public_host" %}
+        proxy_redirect ~^https?://[^/]+(/.*)$ $scheme://$host$1;
+{% else %}
+        proxy_redirect default;
+{% endif %}
+{% if cookie_rewrite_enabled %}
+        proxy_cookie_domain ~(?i)^(.+)$ $host;
+        proxy_cookie_path / /;
+{% endif %}
 {% if is_https_upstream %}
         proxy_ssl_server_name {% if enable_sni %}on{% else %}off{% endif %};
         proxy_ssl_name {{ upstream_ssl_name }};
@@ -66,17 +97,38 @@ server {
 {% endif %}
 {% endif %}
     }
-{% endif %}
+{%- endmacro %}
+
+server {
+    listen 80;
+    server_name {{ site_host }};
+
+    client_max_body_size {{ client_max_body_size_mb }}m;
+
+{% if tls_enabled and http_redirect_to_https %}
+    location / {
+        return 301 https://$host$request_uri;
+    }
+{% else %}
+{{ waf_auth_location() }}
+{{ proxy_location() }}
 
     location @waf_forbidden {
         return 403;
     }
+
+    location @waf_allow {
+        return 204;
+    }
+{% endif %}
 }
 
 {% if tls_enabled %}
 server {
     listen 443 ssl http2;
     server_name {{ site_host }};
+
+    client_max_body_size {{ client_max_body_size_mb }}m;
 
     ssl_certificate {{ tls_cert_path }};
     ssl_certificate_key {{ tls_key_path }};
@@ -92,68 +144,15 @@ server {
     add_header Strict-Transport-Security "max-age=31536000" always;
 {% endif %}
 
-    location = /auth-waf {
-        internal;
-
-        proxy_pass http://waf_auth_engine/inspect;
-        proxy_method POST;
-
-        proxy_pass_request_body on;
-        proxy_set_body $request_body;
-        proxy_set_header Content-Length $content_length;
-        proxy_set_header Content-Type $content_type;
-
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Real-IP $remote_addr;
-
-        proxy_set_header X-Original-Method $request_method;
-        proxy_set_header X-Original-URI $request_uri;
-        proxy_set_header X-Original-Host $host;
-        proxy_set_header X-Original-Proto $scheme;
-        proxy_set_header X-Original-Query $query_string;
-        proxy_set_header X-Request-ID $request_id;
-
-        proxy_set_header Host $host;
-    }
-
-    location / {
-        auth_request /auth-waf;
-        error_page 401 = @waf_forbidden;
-        error_page 403 = @waf_forbidden;
-
-        proxy_pass {{ upstream_url }};
-        proxy_http_version 1.1;
-
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-Host $host;
-        proxy_set_header X-Forwarded-Port $server_port;
-        proxy_set_header X-Request-ID $request_id;
-{% if preserve_host_header %}
-        proxy_set_header Host $host;
-{% else %}
-        proxy_set_header Host {{ upstream_host_header }};
-{% endif %}
-{% if websocket_enabled %}
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-{% else %}
-        proxy_set_header Connection "";
-{% endif %}
-{% if is_https_upstream %}
-        proxy_ssl_server_name {% if enable_sni %}on{% else %}off{% endif %};
-        proxy_ssl_name {{ upstream_ssl_name }};
-        proxy_ssl_verify {% if upstream_tls_verify %}on{% else %}off{% endif %};
-{% if upstream_tls_verify %}
-        proxy_ssl_trusted_certificate {{ upstream_ca_bundle_path }};
-        proxy_ssl_verify_depth 3;
-{% endif %}
-{% endif %}
-    }
+{{ waf_auth_location() }}
+{{ proxy_location() }}
 
     location @waf_forbidden {
         return 403;
+    }
+
+    location @waf_allow {
+        return 204;
     }
 }
 {% endif %}

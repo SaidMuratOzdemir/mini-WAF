@@ -15,6 +15,33 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 SAFE_FILENAME_RE = re.compile(r"[^a-z0-9]+")
 DEFAULT_SITE_ORDER = 120
+BODY_PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
+    "strict": {
+        "waf_forward_body": True,
+        "client_max_body_size_mb": 1,
+        "proxy_request_buffering": True,
+    },
+    "default": {
+        "waf_forward_body": True,
+        "client_max_body_size_mb": 5,
+        "proxy_request_buffering": True,
+    },
+    "headers_only": {
+        "waf_forward_body": False,
+        "client_max_body_size_mb": 10,
+        "proxy_request_buffering": True,
+    },
+    "upload_friendly": {
+        "waf_forward_body": False,
+        "client_max_body_size_mb": 100,
+        "proxy_request_buffering": False,
+    },
+    "custom": {
+        "waf_forward_body": True,
+        "client_max_body_size_mb": 5,
+        "proxy_request_buffering": True,
+    },
+}
 
 
 @dataclass(slots=True)
@@ -139,6 +166,34 @@ class NginxConfigManager:
             getattr(site, "upstream_tls_server_name_override", None)
         )
         upstream_ssl_name = upstream_override or (parsed_url.hostname or "")
+        body_profile = str(getattr(site, "body_inspection_profile", "default") or "default").strip().lower()
+        if body_profile not in BODY_PROFILE_DEFAULTS:
+            body_profile = "default"
+        profile_defaults = BODY_PROFILE_DEFAULTS[body_profile]
+
+        configured_body_mb = getattr(site, "client_max_body_size_mb", None)
+        if configured_body_mb is None:
+            client_max_body_size_mb = int(profile_defaults["client_max_body_size_mb"])
+        else:
+            client_max_body_size_mb = max(1, int(configured_body_mb))
+
+        configured_request_buffering = getattr(site, "proxy_request_buffering", None)
+        if configured_request_buffering is None:
+            proxy_request_buffering = bool(profile_defaults["proxy_request_buffering"])
+        else:
+            proxy_request_buffering = bool(configured_request_buffering)
+
+        proxy_read_timeout_sec = max(1, int(getattr(site, "proxy_read_timeout_sec", 60) or 60))
+        proxy_send_timeout_sec = max(1, int(getattr(site, "proxy_send_timeout_sec", 60) or 60))
+        proxy_connect_timeout_sec = max(1, int(getattr(site, "proxy_connect_timeout_sec", 10) or 10))
+
+        proxy_redirect_mode = str(getattr(site, "proxy_redirect_mode", "default") or "default").strip().lower()
+        if proxy_redirect_mode not in {"default", "off", "rewrite_to_public_host"}:
+            proxy_redirect_mode = "default"
+
+        waf_decision_mode = str(getattr(site, "waf_decision_mode", "fail_close") or "fail_close").strip().lower()
+        if waf_decision_mode not in {"fail_open", "fail_close"}:
+            waf_decision_mode = "fail_close"
 
         return {
             "site_host": site.host,
@@ -151,9 +206,20 @@ class NginxConfigManager:
             "upstream_tls_verify": bool(getattr(site, "upstream_tls_verify", True)),
             "upstream_ca_bundle_path": self.upstream_ca_bundle_path,
             "websocket_enabled": bool(site.websocket_enabled),
+            "sse_enabled": bool(getattr(site, "sse_enabled", False)),
             "tls_enabled": tls_enabled,
             "http_redirect_to_https": bool(getattr(site, "http_redirect_to_https", False)),
             "hsts_enabled": bool(getattr(site, "hsts_enabled", False)),
+            "body_inspection_profile": body_profile,
+            "waf_forward_body": bool(profile_defaults["waf_forward_body"]),
+            "client_max_body_size_mb": client_max_body_size_mb,
+            "proxy_request_buffering": proxy_request_buffering,
+            "proxy_read_timeout_sec": proxy_read_timeout_sec,
+            "proxy_send_timeout_sec": proxy_send_timeout_sec,
+            "proxy_connect_timeout_sec": proxy_connect_timeout_sec,
+            "proxy_redirect_mode": proxy_redirect_mode,
+            "cookie_rewrite_enabled": bool(getattr(site, "cookie_rewrite_enabled", False)),
+            "waf_fail_open": waf_decision_mode == "fail_open",
             "tls_cert_path": certificate.cert_pem_path if certificate else "",
             "tls_key_path": certificate.key_pem_path if certificate else "",
             "tls_chain_path": certificate.chain_pem_path if certificate else None,

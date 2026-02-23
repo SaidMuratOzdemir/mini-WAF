@@ -6,6 +6,10 @@ from typing import Optional, List
 from datetime import datetime
 from urllib.parse import urlsplit
 
+BODY_INSPECTION_PROFILES = {"strict", "default", "headers_only", "upload_friendly", "custom"}
+PROXY_REDIRECT_MODES = {"default", "off", "rewrite_to_public_host"}
+WAF_DECISION_MODES = {"fail_open", "fail_close"}
+
 # --- Token Schemas ---
 class TokenResponse(BaseModel):
     access_token: str
@@ -33,7 +37,16 @@ class SiteBase(BaseModel):
     preserve_host_header: bool = False
     enable_sni: bool = True
     websocket_enabled: bool = True
+    sse_enabled: bool = False
     body_inspection_profile: str = "default"
+    client_max_body_size_mb: Optional[int] = None
+    proxy_request_buffering: Optional[bool] = None
+    proxy_read_timeout_sec: int = 60
+    proxy_send_timeout_sec: int = 60
+    proxy_connect_timeout_sec: int = 10
+    proxy_redirect_mode: str = "default"
+    cookie_rewrite_enabled: bool = False
+    waf_decision_mode: str = "fail_close"
     tls_enabled: bool = False
     http_redirect_to_https: bool = False
     tls_certificate_id: Optional[int] = None
@@ -66,7 +79,38 @@ class SiteBase(BaseModel):
     def validate_body_inspection_profile(cls, v):
         if not v or v.isspace():
             raise ValueError("Body inspection profile cannot be empty")
-        return v.strip()
+        normalized = v.strip().lower()
+        if normalized not in BODY_INSPECTION_PROFILES:
+            raise ValueError("body_inspection_profile must be one of strict/default/headers_only/upload_friendly/custom")
+        return normalized
+
+    @field_validator("client_max_body_size_mb")
+    def validate_client_max_body_size_mb(cls, v):
+        if v is None:
+            return None
+        if v < 1 or v > 1024:
+            raise ValueError("client_max_body_size_mb must be between 1 and 1024")
+        return v
+
+    @field_validator("proxy_read_timeout_sec", "proxy_send_timeout_sec", "proxy_connect_timeout_sec")
+    def validate_timeouts(cls, v):
+        if v < 1 or v > 3600:
+            raise ValueError("timeout must be between 1 and 3600 seconds")
+        return v
+
+    @field_validator("proxy_redirect_mode")
+    def validate_proxy_redirect_mode(cls, v):
+        normalized = v.strip().lower()
+        if normalized not in PROXY_REDIRECT_MODES:
+            raise ValueError("proxy_redirect_mode must be one of default/off/rewrite_to_public_host")
+        return normalized
+
+    @field_validator("waf_decision_mode")
+    def validate_waf_decision_mode(cls, v):
+        normalized = v.strip().lower()
+        if normalized not in WAF_DECISION_MODES:
+            raise ValueError("waf_decision_mode must be one of fail_open/fail_close")
+        return normalized
 
     @field_validator("upstream_tls_server_name_override")
     def validate_upstream_tls_server_name_override(cls, v):

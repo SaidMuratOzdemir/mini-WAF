@@ -41,6 +41,42 @@ HTTPS flow:
 - HTTPS `:443` terminates TLS in nginx and continues `auth_request` flow to WAF.
 - Upstream HTTPS can enable/disable verify and override SNI name.
 
+## Phase 8 Proxy Tuning
+
+Site-level tuning fields:
+- `body_inspection_profile`: `strict`, `default`, `headers_only`, `upload_friendly` (`custom` reserved for internal use)
+- `client_max_body_size_mb`
+- `proxy_request_buffering`
+- `proxy_read_timeout_sec`
+- `proxy_send_timeout_sec`
+- `proxy_connect_timeout_sec`
+- `sse_enabled`
+- `proxy_redirect_mode`: `default`, `off`, `rewrite_to_public_host`
+- `cookie_rewrite_enabled`
+- `waf_decision_mode`: `fail_open`, `fail_close`
+
+Body inspection profile behavior:
+- `strict`: forwards request body to WAF, low body limit (`1m`)
+- `default`: forwards body, medium limit (`5m`)
+- `headers_only`: body forwarding off, metadata-only inspection
+- `upload_friendly`: body forwarding off, high body limit (`100m`), buffering tuned for uploads
+
+Nginx runtime behavior:
+- Adds `X-WAF-Inspection-Profile` header to WAF sub-requests.
+- Applies per-site timeout/buffering values directly in generated location blocks.
+- `sse_enabled=true` enables streaming-friendly settings (`proxy_buffering off`, `X-Accel-Buffering no`).
+- `proxy_redirect_mode=rewrite_to_public_host` rewrites absolute upstream redirects to `$scheme://$host`.
+- `cookie_rewrite_enabled=true` enables basic cookie domain/path rewriting.
+
+WAF decision modes:
+- `fail_close`: WAF 5xx/timeout on auth sub-request is converted to `403`.
+- `fail_open`: WAF 5xx/timeout is mapped to internal `204`, request continues to upstream.
+
+Operational notes:
+- Upload-heavy endpoints should prefer `headers_only` or `upload_friendly`.
+- SSE should be enabled only for endpoints needing long-lived streaming.
+- Redirect/cookie rewrite is MVP and covers common upstream patterns, not full rehosting.
+
 ## Security Policy
 
 - Allowed schemes: `http`, `https`
