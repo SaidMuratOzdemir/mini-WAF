@@ -13,7 +13,7 @@ from app.database import get_session
 from app.models import Site as SiteModel
 from app.schemas import SiteCreate, Site as SiteSchema, UserInDB
 from app.core.security import get_current_admin_user
-from app.services.nginx_config_manager import NginxConfigManager
+from app.services.nginx_config_manager import NginxConfigManager, NginxConfigApplyError
 
 router = APIRouter(prefix="/sites", tags=["Sites"])
 nginx_config_manager = NginxConfigManager()
@@ -24,22 +24,27 @@ async def sync_site_proxy_config_hook(site: SiteModel, operation: str) -> None:
     Sync rendered site configs to generated Nginx snippets directory.
     """
     try:
-        result = await run_in_threadpool(nginx_config_manager.sync_site_config, site, operation)
+        result = await run_in_threadpool(nginx_config_manager.apply_with_rollback, site, operation)
         logger.info("Synced Nginx config for site change", extra={
             "site_id": getattr(site, "id", None),
             "host": getattr(site, "host", None),
             "operation": operation,
             "sync_result": result,
         })
-    except Exception as exc:
-        logger.exception(
-            "Failed to sync Nginx site config",
-            extra={"site_id": getattr(site, "id", None), "operation": operation},
+    except NginxConfigApplyError as exc:
+        logger.error(
+            "Failed to apply Nginx config pipeline for site",
+            extra={
+                "site_id": getattr(site, "id", None),
+                "host": getattr(site, "host", None),
+                "operation": operation,
+                "diagnostics": exc.diagnostics,
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Site saved but Nginx config sync failed: {exc}",
-        ) from exc
+            detail=f"{exc.detail} (stage: {exc.diagnostics.get('stage', 'unknown')})",
+        )
 
 
 async def check_external_site_health(host: str) -> str:
@@ -104,9 +109,16 @@ async def create_site(
 
     new_site = SiteModel(**site.model_dump())
     session.add(new_site)
-    await session.commit()
+    try:
+        await session.flush()
+        await session.refresh(new_site)
+        await sync_site_proxy_config_hook(new_site, "create")
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+
     await session.refresh(new_site)
-    await sync_site_proxy_config_hook(new_site, "create")
 
     return new_site
 
@@ -137,9 +149,15 @@ async def update_site(
     for key, value in update_data.items():
         setattr(db_site, key, value)
 
-    await session.commit()
+    try:
+        await session.flush()
+        await sync_site_proxy_config_hook(db_site, "update")
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+
     await session.refresh(db_site)
-    await sync_site_proxy_config_hook(db_site, "update")
 
     return db_site
 
@@ -156,6 +174,11 @@ async def delete_site(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Site with ID {site_id} not found.")
 
     deleted_site = db_site
-    await session.delete(db_site)
-    await session.commit()
-    await sync_site_proxy_config_hook(deleted_site, "delete")
+    try:
+        await session.delete(db_site)
+        await session.flush()
+        await sync_site_proxy_config_hook(deleted_site, "delete")
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
