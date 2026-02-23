@@ -1,6 +1,7 @@
 # api/app/routers/sites.py
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import httpx
@@ -12,20 +13,33 @@ from app.database import get_session
 from app.models import Site as SiteModel
 from app.schemas import SiteCreate, Site as SiteSchema, UserInDB
 from app.core.security import get_current_admin_user
+from app.services.nginx_config_manager import NginxConfigManager
 
 router = APIRouter(prefix="/sites", tags=["Sites"])
+nginx_config_manager = NginxConfigManager()
 
 
 async def sync_site_proxy_config_hook(site: SiteModel, operation: str) -> None:
     """
-    Phase-1 placeholder for Nginx config sync.
-    Phase-2 wires this into the real config manager.
+    Sync rendered site configs to generated Nginx snippets directory.
     """
-    logger.debug("Site proxy config sync hook is pending implementation", extra={
-        "site_id": getattr(site, "id", None),
-        "host": getattr(site, "host", None),
-        "operation": operation,
-    })
+    try:
+        result = await run_in_threadpool(nginx_config_manager.sync_site_config, site, operation)
+        logger.info("Synced Nginx config for site change", extra={
+            "site_id": getattr(site, "id", None),
+            "host": getattr(site, "host", None),
+            "operation": operation,
+            "sync_result": result,
+        })
+    except Exception as exc:
+        logger.exception(
+            "Failed to sync Nginx site config",
+            extra={"site_id": getattr(site, "id", None), "operation": operation},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Site saved but Nginx config sync failed: {exc}",
+        ) from exc
 
 
 async def check_external_site_health(host: str) -> str:
