@@ -147,7 +147,7 @@ services:
       context: ./forward-proxy
       dockerfile: Dockerfile
     ports:
-      - "3128:3128"
+      - "${FORWARD_PROXY_BIND_IP:-127.0.0.1}:${FORWARD_PROXY_PORT:-3128}:3128"
     environment:
       - FORWARD_PROXY_CONFIG_PATH=${FORWARD_PROXY_CONFIG_PATH:-/etc/squid/generated/squid.conf}
     volumes:
