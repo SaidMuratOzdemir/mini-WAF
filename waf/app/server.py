@@ -408,6 +408,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="WAF Auth Engine", version="3.0.0", lifespan=lifespan)
 
 
+@app.get("/health")
+async def health() -> dict[str, str]:
+    """Lightweight health check for container orchestration."""
+    return {"status": "ok"}
+
+
 @app.api_route("/inspect", methods=["GET", "POST"])
 async def inspect(request: Request) -> Response:
     """Fail-open authorization endpoint called by Nginx auth_request."""
