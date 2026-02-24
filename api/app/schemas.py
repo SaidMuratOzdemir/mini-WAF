@@ -207,6 +207,7 @@ class OutboundProxyProfileBase(BaseModel):
     allow_connect_ports: str = "443,563"
     allowed_client_cidrs: Optional[str] = None
     default_action: str = "deny"
+    block_private_destinations: bool = True
 
     @field_validator("name")
     def validate_name(cls, v):

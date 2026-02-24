@@ -75,6 +75,7 @@ class OutboundProxyProfile(Base):
     allow_connect_ports = Column(String, default="443,563", nullable=False)
     allowed_client_cidrs = Column(String, nullable=True)
     default_action = Column(String, default="deny", nullable=False)
+    block_private_destinations = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

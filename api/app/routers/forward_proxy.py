@@ -41,6 +41,7 @@ def _profile_state(profile: OutboundProxyProfile) -> dict[str, object]:
         "allow_connect_ports": profile.allow_connect_ports,
         "allowed_client_cidrs": profile.allowed_client_cidrs,
         "default_action": profile.default_action,
+        "block_private_destinations": profile.block_private_destinations,
     }
 
 

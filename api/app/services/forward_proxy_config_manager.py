@@ -183,6 +183,8 @@ class ForwardProxyConfigManager:
                 "deny_rules": [],
                 "allow_rules": [],
                 "default_action": "deny",
+                "block_private_destinations": True,
+                "allowed_private_cidrs": [],
             }
 
         compiled_rules: list[dict[str, object]] = []
@@ -207,6 +209,8 @@ class ForwardProxyConfigManager:
         if listen_port < 1 or listen_port > 65535:
             raise ValueError(f"Invalid listen_port value: {listen_port}")
 
+        block_private = bool(getattr(profile, "block_private_destinations", True))
+
         return {
             "listen_port": listen_port,
             "connect_ports": self._normalize_connect_ports(getattr(profile, "allow_connect_ports", None)),
@@ -214,6 +218,8 @@ class ForwardProxyConfigManager:
             "deny_rules": deny_rules,
             "allow_rules": allow_rules,
             "default_action": default_action,
+            "block_private_destinations": block_private,
+            "allowed_private_cidrs": [],
         }
 
     def render_proxy_config(self, profile, rules: Sequence[object] | None = None) -> str:

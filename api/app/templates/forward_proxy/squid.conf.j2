@@ -21,6 +21,22 @@ acl allowed_clients src {{ client_cidrs | join(' ') }}
 http_access deny !allowed_clients
 {% endif %}
 
+{% if block_private_destinations %}
+# ── Phase 9A.1-C: Block private/internal destinations ──
+acl private_dst dst 127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+acl private_dst dst 169.254.0.0/16
+acl private_dst dst 100.64.0.0/10
+acl private_dst dst fc00::/7
+acl private_dst dst ::1/128
+acl private_dst dst fe80::/10
+{% if allowed_private_cidrs %}
+acl private_override dst {{ allowed_private_cidrs | join(' ') }}
+http_access allow private_override
+{% endif %}
+http_access deny private_dst
+http_access deny CONNECT private_dst
+{% endif %}
+
 {% for rule in deny_rules %}
 acl {{ rule.acl_name }} {{ rule.acl_type }} {{ rule.value }}
 http_access deny {{ rule.acl_name }}
