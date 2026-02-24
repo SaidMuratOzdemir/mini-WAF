@@ -33,6 +33,7 @@ INSPECTION_QUEUE_SIZE = int(os.getenv("INSPECTION_QUEUE_SIZE", "5000"))
 INSPECTION_WORKERS = int(os.getenv("INSPECTION_WORKERS", "8"))
 VT_TIMEOUT_SECONDS = float(os.getenv("VT_TIMEOUT_SECONDS", "8"))
 MAX_LOG_BODY_BYTES = int(os.getenv("MAX_LOG_BODY_BYTES", "16384"))
+INSPECTION_TTL_DAYS = int(os.getenv("WAF_INSPECTION_TTL_DAYS", "30"))
 
 logging.basicConfig(
     level=logging.DEBUG if DEBUG else logging.INFO,
@@ -339,6 +340,7 @@ async def lifespan(app: FastAPI):
     )
     app.state.inspection_queue = asyncio.Queue(maxsize=INSPECTION_QUEUE_SIZE)
     app.state.worker_tasks = []
+    app.state.inspection_ttl_days = 0
 
     try:
         redis_client = redis.from_url(REDIS_URL, decode_responses=True)
@@ -356,8 +358,42 @@ async def lifespan(app: FastAPI):
         await collection.create_index("request.client_ip")
         await collection.create_index("decision")
 
+        # ── Phase 9A.2-D: TTL index for automatic document expiry ──
+        if INSPECTION_TTL_DAYS > 0:
+            ttl_seconds = INSPECTION_TTL_DAYS * 86400
+            try:
+                await collection.create_index(
+                    "timestamp",
+                    name="ttl_timestamp",
+                    expireAfterSeconds=ttl_seconds,
+                )
+                logger.info(
+                    "MongoDB TTL index ensured: inspections.timestamp "
+                    "expireAfterSeconds=%s (%d days)",
+                    ttl_seconds,
+                    INSPECTION_TTL_DAYS,
+                )
+            except Exception:
+                # If the TTL value changed, we need to drop + recreate.
+                # collMod is the canonical way but requires admin; fall back
+                # to drop-and-create for dev/ops simplicity.
+                try:
+                    await collection.drop_index("ttl_timestamp")
+                    await collection.create_index(
+                        "timestamp",
+                        name="ttl_timestamp",
+                        expireAfterSeconds=ttl_seconds,
+                    )
+                    logger.info(
+                        "MongoDB TTL index recreated with expireAfterSeconds=%s",
+                        ttl_seconds,
+                    )
+                except Exception:
+                    logger.exception("Failed to update TTL index")
+
         app.state.mongo_client = mongo_client
         app.state.mongo_collection = collection
+        app.state.inspection_ttl_days = INSPECTION_TTL_DAYS
         logger.info("MongoDB async client initialized")
     except Exception:
         logger.exception("MongoDB initialization failed. Inspection logs disabled.")
@@ -409,9 +445,26 @@ app = FastAPI(title="WAF Auth Engine", version="3.0.0", lifespan=lifespan)
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    """Lightweight health check for container orchestration."""
-    return {"status": "ok"}
+async def health() -> dict[str, Any]:
+    """Health check with operational metadata."""
+    mongo_ok = app.state.mongo_collection is not None
+    redis_ok = app.state.redis_client is not None
+
+    result: dict[str, Any] = {
+        "status": "ok",
+        "redis": "connected" if redis_ok else "disconnected",
+        "mongodb": "connected" if mongo_ok else "disconnected",
+        "inspection_queue_size": app.state.inspection_queue.qsize(),
+        "inspection_workers": len(app.state.worker_tasks),
+    }
+
+    ttl_days = getattr(app.state, "inspection_ttl_days", 0)
+    if ttl_days > 0:
+        result["inspection_ttl_days"] = ttl_days
+    else:
+        result["inspection_ttl_days"] = None  # unlimited retention
+
+    return result
 
 
 @app.api_route("/inspect", methods=["GET", "POST"])

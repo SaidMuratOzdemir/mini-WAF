@@ -145,6 +145,7 @@ services:
       - INSPECTION_QUEUE_SIZE=5000
       - INSPECTION_WORKERS=8
       - VT_TIMEOUT_SECONDS=8
+      - WAF_INSPECTION_TTL_DAYS=${WAF_INSPECTION_TTL_DAYS:-30}
     depends_on:
       redis:
         condition: service_healthy
