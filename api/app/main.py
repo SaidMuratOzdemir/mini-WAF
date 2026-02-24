@@ -1,13 +1,67 @@
 # api/app/main.py
 
+import logging
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 import redis.asyncio as redis
 
 from app.core.config import settings
 from app.core import dependencies
 from app.routers import auth, sites, ips, patterns, system, logs, certificates, policies, audits, forward_proxy
+
+_logger = logging.getLogger("app.requests")
+
+
+# ── Phase 9A.1-E: Structured request/error logging middleware ────────
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log every request with status code and latency; log 5xx with full context."""
+
+    async def dispatch(self, request: Request, call_next):
+        start = time.monotonic()
+        try:
+            response = await call_next(request)
+        except Exception:
+            elapsed_ms = (time.monotonic() - start) * 1000
+            _logger.exception(
+                "UNHANDLED_EXCEPTION method=%s path=%s client=%s elapsed_ms=%.1f",
+                request.method,
+                request.url.path,
+                request.client.host if request.client else "unknown",
+                elapsed_ms,
+            )
+            raise
+
+        elapsed_ms = (time.monotonic() - start) * 1000
+        if response.status_code >= 500:
+            _logger.error(
+                "SERVER_ERROR status=%d method=%s path=%s client=%s elapsed_ms=%.1f",
+                response.status_code,
+                request.method,
+                request.url.path,
+                request.client.host if request.client else "unknown",
+                elapsed_ms,
+            )
+        elif response.status_code >= 400:
+            _logger.warning(
+                "CLIENT_ERROR status=%d method=%s path=%s client=%s elapsed_ms=%.1f",
+                response.status_code,
+                request.method,
+                request.url.path,
+                request.client.host if request.client else "unknown",
+                elapsed_ms,
+            )
+        else:
+            _logger.debug(
+                "OK status=%d method=%s path=%s elapsed_ms=%.1f",
+                response.status_code,
+                request.method,
+                request.url.path,
+                elapsed_ms,
+            )
+        return response
 
 
 @asynccontextmanager
@@ -56,6 +110,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Phase 9A.1-E: Request logging / failure visibility middleware
+app.add_middleware(RequestLoggingMiddleware)
 
 # Include all the routers
 app.include_router(auth.router, prefix=settings.API_V1_STR)

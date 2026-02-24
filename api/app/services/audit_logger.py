@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import traceback
 from datetime import date, datetime
 from typing import Any
 
@@ -12,6 +13,14 @@ from app.schemas import UserInDB
 
 
 logger = logging.getLogger(__name__)
+
+# ── Phase 9A.1-E: Counter for audit persistence failures ────────────
+_audit_failure_count: int = 0
+
+
+def get_audit_failure_count() -> int:
+    """Return cumulative number of audit persistence failures since process start."""
+    return _audit_failure_count
 
 
 def get_client_ip(request: Request | None) -> str | None:
@@ -27,6 +36,18 @@ def get_client_ip(request: Request | None) -> str | None:
     if request.client:
         return request.client.host
     return None
+
+
+def _request_context(request: Request | None) -> dict[str, str | None]:
+    """Extract structured request context for error logging."""
+    if not request:
+        return {"client_ip": None, "method": None, "path": None, "request_id": None}
+    return {
+        "client_ip": get_client_ip(request),
+        "method": request.method,
+        "path": str(request.url.path),
+        "request_id": request.headers.get("x-request-id"),
+    }
 
 
 def _to_json_safe(value: Any) -> Any:
@@ -53,6 +74,7 @@ async def write_audit_log(
     after_json: dict[str, Any] | None = None,
     error_message: str | None = None,
 ) -> None:
+    global _audit_failure_count
     try:
         async with AsyncSessionLocal() as session:
             log_entry = AuditLog(
@@ -70,4 +92,20 @@ async def write_audit_log(
             session.add(log_entry)
             await session.commit()
     except Exception:
-        logger.exception("Failed to persist audit log", extra={"action": action, "target_type": target_type})
+        _audit_failure_count += 1
+        # ── Phase 9A.1-E: Structured error with full context ────────
+        ctx = _request_context(request)
+        logger.error(
+            "AUDIT_PERSIST_FAILURE: Failed to persist audit log "
+            "[action=%s target_type=%s target_id=%s actor=%s ip=%s method=%s path=%s request_id=%s failures=%d]: %s",
+            action,
+            target_type,
+            target_id,
+            actor.username if actor else None,
+            ctx["client_ip"],
+            ctx["method"],
+            ctx["path"],
+            ctx["request_id"],
+            _audit_failure_count,
+            traceback.format_exc().strip(),
+        )

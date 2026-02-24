@@ -8,13 +8,19 @@ import redis.asyncio as redis
 from app.schemas import UserInDB
 from app.core.security import get_current_admin_user
 from app.core.dependencies import get_redis_connection
+from app.services.audit_logger import get_audit_failure_count
 
 router = APIRouter(prefix="/system", tags=["System"])
 
 @router.get("/health")
 async def health_check():
     """Return the current health status of the API."""
-    return {"status": "healthy", "timestamp": datetime.now(timezone.utc)}
+    audit_failures = get_audit_failure_count()
+    return {
+        "status": "degraded" if audit_failures > 0 else "healthy",
+        "timestamp": datetime.now(timezone.utc),
+        "audit_persistence_failures": audit_failures,
+    }
 
 @router.get("/vt-cache/stats", response_model=dict)
 async def get_vt_cache_stats(
