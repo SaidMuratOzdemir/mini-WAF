@@ -7,9 +7,11 @@ export interface OutboundProxyProfile {
   listen_port: number;
   is_enabled: boolean;
   require_auth: boolean;
+  auth_realm: string;
   allow_connect_ports: string;
   allowed_client_cidrs: string | null;
   default_action: ForwardProxyAction;
+  block_private_destinations: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -19,9 +21,11 @@ export interface OutboundProxyProfileCreate {
   listen_port: number;
   is_enabled: boolean;
   require_auth: boolean;
+  auth_realm: string;
   allow_connect_ports: string;
   allowed_client_cidrs: string | null;
   default_action: ForwardProxyAction;
+  block_private_destinations: boolean;
 }
 
 export interface OutboundDestinationRule {
@@ -44,10 +48,30 @@ export interface OutboundDestinationRuleCreate {
   is_enabled: boolean;
 }
 
+export interface OutboundProxyUser {
+  id: number;
+  username: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OutboundProxyUserCreate {
+  username: string;
+  password: string;
+}
+
+export interface OutboundProxyUserUpdate {
+  password?: string | null;
+  is_active?: boolean | null;
+}
+
 export interface ForwardProxyStatus {
   active_profile_id: number | null;
   active_profile_name: string | null;
   active_rule_count: number;
+  require_auth: boolean;
+  active_auth_user_count: number;
   config_path: string;
   validation: {
     ok: boolean;

@@ -3,6 +3,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   CircularProgress,
   Divider,
   FormControlLabel,
@@ -23,13 +24,17 @@ import { useNavigate } from 'react-router-dom';
 import {
   applyOutboundProxyConfig,
   createOutboundProfile,
+  createOutboundProxyUser,
   createOutboundRule,
   deleteOutboundProfile,
+  deleteOutboundProxyUser,
   deleteOutboundRule,
   fetchForwardProxyStatus,
   fetchOutboundProfiles,
+  fetchOutboundProxyUsers,
   fetchOutboundRules,
   updateOutboundProfile,
+  updateOutboundProxyUser,
   updateOutboundRule,
 } from '../api/forwardProxy';
 import { useAuth } from '../context/AuthContext';
@@ -39,6 +44,8 @@ import type {
   OutboundDestinationRuleCreate,
   OutboundProxyProfile,
   OutboundProxyProfileCreate,
+  OutboundProxyUser,
+  OutboundProxyUserCreate,
 } from '../types/OutboundProxy';
 
 const DEFAULT_PROFILE_FORM: OutboundProxyProfileCreate = {
@@ -46,9 +53,11 @@ const DEFAULT_PROFILE_FORM: OutboundProxyProfileCreate = {
   listen_port: 3128,
   is_enabled: false,
   require_auth: false,
+  auth_realm: 'WAF Forward Proxy',
   allow_connect_ports: '443,563',
   allowed_client_cidrs: null,
   default_action: 'deny',
+  block_private_destinations: true,
 };
 
 const DEFAULT_RULE_FORM: OutboundDestinationRuleCreate = {
@@ -77,6 +86,11 @@ const OutboundProxyManagement = () => {
 
   const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
   const [ruleForm, setRuleForm] = useState<OutboundDestinationRuleCreate>(DEFAULT_RULE_FORM);
+
+  // Phase 9A.2-B: Auth user management
+  const [proxyUsers, setProxyUsers] = useState<OutboundProxyUser[]>([]);
+  const [userForm, setUserForm] = useState<OutboundProxyUserCreate>({ username: '', password: '' });
+  const [addingUser, setAddingUser] = useState(false);
 
   const selectedProfile = useMemo(
     () => profiles.find((profile) => profile.id === selectedProfileId) ?? null,
@@ -108,12 +122,23 @@ const OutboundProxyManagement = () => {
     setStatus(data);
   };
 
+  const loadProxyUsers = async () => {
+    try {
+      const data = await fetchOutboundProxyUsers();
+      setProxyUsers(data);
+    } catch {
+      // Non-critical; users tab may just be empty
+      setProxyUsers([]);
+    }
+  };
+
   const refreshAll = async () => {
     setLoading(true);
     setError(null);
     try {
       await loadProfiles();
       await loadStatus();
+      await loadProxyUsers();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load outbound proxy state.');
     } finally {
@@ -179,9 +204,11 @@ const OutboundProxyManagement = () => {
       listen_port: profile.listen_port,
       is_enabled: profile.is_enabled,
       require_auth: profile.require_auth,
+      auth_realm: profile.auth_realm ?? 'WAF Forward Proxy',
       allow_connect_ports: profile.allow_connect_ports,
       allowed_client_cidrs: profile.allowed_client_cidrs,
       default_action: profile.default_action,
+      block_private_destinations: profile.block_private_destinations ?? true,
     });
   };
 
@@ -275,6 +302,56 @@ const OutboundProxyManagement = () => {
     }
   };
 
+  // ── Phase 9A.2-B: Proxy user handlers ──
+
+  const handleAddProxyUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userForm.username.trim() || !userForm.password) {
+      setError('Username and password are required.');
+      return;
+    }
+    setAddingUser(true);
+    setError(null);
+    try {
+      await createOutboundProxyUser(userForm);
+      setUserForm({ username: '', password: '' });
+      await loadProxyUsers();
+      await loadStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create proxy user.');
+    } finally {
+      setAddingUser(false);
+    }
+  };
+
+  const handleToggleProxyUser = async (userId: number, isActive: boolean) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await updateOutboundProxyUser(userId, { is_active: !isActive });
+      await loadProxyUsers();
+      await loadStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update proxy user.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteProxyUser = async (userId: number) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await deleteOutboundProxyUser(userId);
+      await loadProxyUsers();
+      await loadStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete proxy user.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (role !== 'super_admin') {
     return (
       <Box sx={{ p: 3 }}>
@@ -301,6 +378,13 @@ const OutboundProxyManagement = () => {
             <Typography variant="h6">Forward Proxy Runtime</Typography>
             <Typography variant="body2">Active profile: {status?.active_profile_name ?? 'none'}</Typography>
             <Typography variant="body2">Rule count: {status?.active_rule_count ?? 0}</Typography>
+            <Typography variant="body2">
+              Auth: {status?.require_auth ? (
+                <Chip label={`Basic Auth (${status?.active_auth_user_count ?? 0} users)`} size="small" color="primary" variant="outlined" />
+              ) : (
+                <Chip label="Disabled" size="small" variant="outlined" />
+              )}
+            </Typography>
             <Typography variant="body2">Config path: {status?.config_path ?? '-'}</Typography>
             <Typography variant="body2">Validate: {status?.validation?.ok ? 'ok' : 'failed'}</Typography>
           </Box>
@@ -382,9 +466,33 @@ const OutboundProxyManagement = () => {
                   onChange={(event) => setProfileForm((prev) => ({ ...prev, require_auth: event.target.checked }))}
                 />
               )}
-              label="Require Auth (not supported in 9A)"
+              label="Require Basic Auth"
+            />
+            <FormControlLabel
+              control={(
+                <Switch
+                  checked={profileForm.block_private_destinations ?? true}
+                  onChange={(event) => setProfileForm((prev) => ({ ...prev, block_private_destinations: event.target.checked }))}
+                />
+              )}
+              label="Block Private Destinations"
             />
           </Box>
+
+          {profileForm.require_auth && (
+            <TextField
+              label="Auth Realm"
+              value={profileForm.auth_realm}
+              onChange={(event) => setProfileForm((prev) => ({ ...prev, auth_realm: event.target.value }))}
+              helperText="Displayed to proxy clients in the authentication prompt"
+            />
+          )}
+
+          {profileForm.require_auth && proxyUsers.filter((u) => u.is_active).length === 0 && (
+            <Alert severity="warning">
+              No active proxy users. You must add at least one user before enabling auth.
+            </Alert>
+          )}
 
           <Stack direction="row" spacing={1}>
             <Button type="submit" variant="contained" disabled={saving || loading}>
@@ -436,6 +544,97 @@ const OutboundProxyManagement = () => {
                         Edit
                       </Button>
                       <Button size="small" color="error" onClick={() => void handleProfileDelete(profile.id)}>
+                        Delete
+                      </Button>
+                    </Stack>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
+
+      <Divider />
+
+      {/* ── Phase 9A.2-B: Proxy Auth User Management ── */}
+      <Paper sx={{ p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 1 }}>Proxy Auth Users</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Credentials required for proxy clients when Basic Auth is enabled on a profile. Passwords are stored as bcrypt hashes — they cannot be retrieved after creation.
+        </Typography>
+
+        <Box component="form" onSubmit={handleAddProxyUser} sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2, alignItems: 'flex-start' }}>
+          <TextField
+            required
+            size="small"
+            label="Username"
+            value={userForm.username}
+            onChange={(e) => setUserForm((prev) => ({ ...prev, username: e.target.value }))}
+            placeholder="proxyuser1"
+            helperText="Letters, digits, . _ @ -"
+          />
+          <TextField
+            required
+            size="small"
+            type="password"
+            label="Password"
+            value={userForm.password}
+            onChange={(e) => setUserForm((prev) => ({ ...prev, password: e.target.value }))}
+            helperText="Min 12 characters"
+          />
+          <Button type="submit" variant="contained" size="small" disabled={addingUser || saving || loading}>
+            {addingUser ? <CircularProgress size={18} /> : 'Add User'}
+          </Button>
+        </Box>
+
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>ID</TableCell>
+                <TableCell>Username</TableCell>
+                <TableCell>Active</TableCell>
+                <TableCell>Created</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {proxyUsers.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} align="center">
+                    <Typography variant="body2" color="text.secondary">No proxy users yet.</Typography>
+                  </TableCell>
+                </TableRow>
+              )}
+              {proxyUsers.map((user) => (
+                <TableRow key={user.id}>
+                  <TableCell>{user.id}</TableCell>
+                  <TableCell>{user.username}</TableCell>
+                  <TableCell>
+                    <Chip
+                      label={user.is_active ? 'active' : 'inactive'}
+                      size="small"
+                      color={user.is_active ? 'success' : 'default'}
+                      variant="outlined"
+                    />
+                  </TableCell>
+                  <TableCell>{new Date(user.created_at).toLocaleDateString()}</TableCell>
+                  <TableCell>
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        size="small"
+                        onClick={() => void handleToggleProxyUser(user.id, user.is_active)}
+                        disabled={saving}
+                      >
+                        {user.is_active ? 'Deactivate' : 'Activate'}
+                      </Button>
+                      <Button
+                        size="small"
+                        color="error"
+                        onClick={() => void handleDeleteProxyUser(user.id)}
+                        disabled={saving}
+                      >
                         Delete
                       </Button>
                     </Stack>

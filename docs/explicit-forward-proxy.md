@@ -38,7 +38,8 @@ curl --proxy http://VM_IP:3128 https://example.com
 - `name`
 - `listen_port`
 - `is_enabled`
-- `require_auth` (reserved; must remain `false` in 9A)
+- `require_auth` (enable Squid Basic Auth – requires at least one active proxy user)
+- `auth_realm` (optional realm string shown in the 407 dialog, default `Outbound Proxy`)
 - `allow_connect_ports` (CSV, e.g. `443,563`)
 - `allowed_client_cidrs` (CSV allowlist)
 - `default_action` (`allow` or `deny`)
@@ -78,6 +79,42 @@ If empty:
 
 - Proxy accepts clients from all source IPs (high risk if internet-exposed).
 
+## Basic Authentication (Phase 9A.2)
+
+When `require_auth` is `true`, Squid requires HTTP Basic credentials via the `basic_ncsa_auth` helper.
+
+### Enabling
+
+1. Create at least one proxy user via the Admin API or Admin UI.
+2. Set `require_auth = true` on the profile and apply.
+
+The API will reject the apply if `require_auth` is `true` but no active users exist.
+
+### Proxy User Management
+
+- `POST /api/v1/forward-proxy/users` – create user (min 12-char password)
+- `GET  /api/v1/forward-proxy/users` – list users
+- `PUT  /api/v1/forward-proxy/users/{id}` – update password or toggle `is_active`
+- `DELETE /api/v1/forward-proxy/users/{id}` – remove user
+
+Usernames must match `[a-zA-Z0-9._@-]+` and are stored lowercase.
+Passwords are bcrypt-hashed; plaintext is never persisted.
+
+### Curl Examples
+
+```bash
+# With auth
+curl --proxy http://VM_IP:3128 --proxy-user alice:S3cretP@ssw0rd http://example.com
+curl --proxy http://VM_IP:3128 --proxy-user alice:S3cretP@ssw0rd https://example.com
+```
+
+Browsers configured with the proxy will show a native 407 authentication dialog.
+
+### Security Warning
+
+Basic Auth transmits credentials **base64-encoded (not encrypted)**.
+If the client-to-proxy hop crosses an untrusted network, wrap it in a VPN or TLS tunnel.
+
 ## Logging
 
 - Squid access logs: `/var/log/squid/access.log` (volume-backed).
@@ -92,12 +129,12 @@ If empty:
 1. Do not expose `3128` publicly without CIDR restrictions.
 2. Prefer `default_action=deny` with explicit allow rules.
 3. Keep `allow_connect_ports` limited (e.g. `443,563`).
-4. `require_auth` is not implemented in 9A; do not rely on it.
+4. When `require_auth` is enabled, ensure all proxy clients have valid credentials.
 5. No payload inspection in CONNECT tunnel in this phase.
 
 ## Non-Goals in 9A
 
 - TLS MITM / CA distribution
 - Content-level inspection of HTTPS payload
-- SSO/user auth integration
-- URL categorization/malware scanning
+- SSO / LDAP / external auth integration (only local ncsa_auth)
+- URL categorization / malware scanning

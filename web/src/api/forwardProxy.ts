@@ -5,6 +5,9 @@ import type {
   OutboundDestinationRuleCreate,
   OutboundProxyProfile,
   OutboundProxyProfileCreate,
+  OutboundProxyUser,
+  OutboundProxyUserCreate,
+  OutboundProxyUserUpdate,
 } from '../types/OutboundProxy';
 
 export const fetchOutboundProfiles = async (): Promise<OutboundProxyProfile[]> =>
@@ -55,3 +58,26 @@ export const applyOutboundProxyConfig = async (): Promise<Record<string, unknown
 
 export const fetchForwardProxyStatus = async (): Promise<ForwardProxyStatus> =>
   apiFetch('/forward-proxy/status');
+
+// ── Phase 9A.2-B: Proxy Auth User CRUD ──
+
+export const fetchOutboundProxyUsers = async (): Promise<OutboundProxyUser[]> =>
+  apiFetch('/forward-proxy/users');
+
+export const createOutboundProxyUser = async (
+  payload: OutboundProxyUserCreate,
+): Promise<OutboundProxyUser> => apiFetch('/forward-proxy/users', {
+  method: 'POST',
+  body: JSON.stringify(payload),
+});
+
+export const updateOutboundProxyUser = async (
+  userId: number,
+  payload: OutboundProxyUserUpdate,
+): Promise<OutboundProxyUser> => apiFetch(`/forward-proxy/users/${userId}`, {
+  method: 'PUT',
+  body: JSON.stringify(payload),
+});
+
+export const deleteOutboundProxyUser = async (userId: number): Promise<void> =>
+  apiFetch(`/forward-proxy/users/${userId}`, { method: 'DELETE' });
