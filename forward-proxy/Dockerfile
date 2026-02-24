@@ -1,7 +1,7 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends squid ca-certificates && \
+    apt-get install -y --no-install-recommends squid ca-certificates apache2-utils && \
     rm -rf /var/lib/apt/lists/*
 
 COPY bootstrap-squid.conf /opt/squid/bootstrap-squid.conf

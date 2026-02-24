@@ -94,6 +94,7 @@ services:
       - CERT_STORAGE_DIR=${CERT_STORAGE_DIR:-/shared/certs}
       - NGINX_UPSTREAM_CA_BUNDLE_PATH=${NGINX_UPSTREAM_CA_BUNDLE_PATH:-/etc/ssl/certs/ca-certificates.crt}
       - FORWARD_PROXY_GENERATED_CONFIG_PATH=${FORWARD_PROXY_GENERATED_CONFIG_PATH:-/shared/forward-proxy/generated/squid.conf}
+      - FORWARD_PROXY_HTPASSWD_PATH=${FORWARD_PROXY_HTPASSWD_PATH:-/shared/forward-proxy/generated/squid_users}
       - FORWARD_PROXY_TEST_COMMAND=python /app/app/services/forward_proxy_control_client.py validate
       - FORWARD_PROXY_RELOAD_COMMAND=python /app/app/services/forward_proxy_control_client.py reload
       - FORWARD_PROXY_CONTROL_BASE_URL=${FORWARD_PROXY_CONTROL_BASE_URL:-http://forward-proxy-control:8082}

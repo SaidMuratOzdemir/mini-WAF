@@ -199,11 +199,16 @@ class AuditLogOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+PROXY_USERNAME_RE = re.compile(r"^[a-zA-Z0-9._@-]+$")
+MIN_PROXY_PASSWORD_LENGTH = 12
+
+
 class OutboundProxyProfileBase(BaseModel):
     name: str
     listen_port: int = 3128
     is_enabled: bool = False
     require_auth: bool = False
+    auth_realm: str = "WAF Forward Proxy"
     allow_connect_ports: str = "443,563"
     allowed_client_cidrs: Optional[str] = None
     default_action: str = "deny"
@@ -269,11 +274,17 @@ class OutboundProxyProfileBase(BaseModel):
             raise ValueError("default_action must be allow or deny")
         return normalized
 
-    @field_validator("require_auth")
-    def validate_require_auth(cls, v):
-        if v:
-            raise ValueError("require_auth=true is not supported in phase-9a")
-        return v
+    @field_validator("auth_realm")
+    def validate_auth_realm(cls, v):
+        value = v.strip()
+        if not value:
+            return "WAF Forward Proxy"
+        if len(value) > 256:
+            raise ValueError("auth_realm is too long")
+        # Prevent injection in squid config – disallow control chars and quotes
+        if any(c in value for c in ('"', "'", "\n", "\r", "\\")):
+            raise ValueError("auth_realm contains invalid characters")
+        return value
 
 
 class OutboundProxyProfileCreate(OutboundProxyProfileBase):
@@ -286,6 +297,61 @@ class OutboundProxyProfileUpdate(OutboundProxyProfileBase):
 
 class OutboundProxyProfileOut(OutboundProxyProfileBase):
     id: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+# --- Outbound Proxy User Schemas ---
+class OutboundProxyUserCreate(BaseModel):
+    username: str
+    password: str
+
+    @field_validator("username")
+    def validate_username(cls, v):
+        value = v.strip().lower()
+        if not value:
+            raise ValueError("Username cannot be empty")
+        if len(value) > 128:
+            raise ValueError("Username is too long (max 128 characters)")
+        if not PROXY_USERNAME_RE.match(value):
+            raise ValueError(
+                "Username may only contain letters, digits, dots, underscores, hyphens, and @"
+            )
+        return value
+
+    @field_validator("password")
+    def validate_password(cls, v):
+        if len(v) < MIN_PROXY_PASSWORD_LENGTH:
+            raise ValueError(
+                f"Password must be at least {MIN_PROXY_PASSWORD_LENGTH} characters"
+            )
+        if len(v) > 512:
+            raise ValueError("Password is too long (max 512 characters)")
+        return v
+
+
+class OutboundProxyUserUpdate(BaseModel):
+    password: Optional[str] = None
+    is_active: Optional[bool] = None
+
+    @field_validator("password")
+    def validate_password(cls, v):
+        if v is None:
+            return v
+        if len(v) < MIN_PROXY_PASSWORD_LENGTH:
+            raise ValueError(
+                f"Password must be at least {MIN_PROXY_PASSWORD_LENGTH} characters"
+            )
+        if len(v) > 512:
+            raise ValueError("Password is too long (max 512 characters)")
+        return v
+
+
+class OutboundProxyUserOut(BaseModel):
+    id: int
+    username: str
+    is_active: bool
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
@@ -377,6 +443,8 @@ class ForwardProxyStatusOut(BaseModel):
     active_profile_id: Optional[int] = None
     active_profile_name: Optional[str] = None
     active_rule_count: int = 0
+    require_auth: bool = False
+    active_auth_user_count: int = 0
     config_path: str
     validation: dict[str, object]
 

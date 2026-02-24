@@ -37,16 +37,17 @@ def test_phase9a_profile_rejects_invalid_listen_port(port: int) -> None:
 
 
 def test_phase9a_profile_rejects_require_auth_true() -> None:
-    with pytest.raises(ValidationError):
-        OutboundProxyProfileCreate(
-            name="auth-not-supported",
-            listen_port=3128,
-            is_enabled=False,
-            require_auth=True,
-            allow_connect_ports="443",
-            allowed_client_cidrs=None,
-            default_action="deny",
-        )
+    """Phase 9A.2-A: require_auth=true is now accepted; this test verifies it no longer rejects."""
+    profile = OutboundProxyProfileCreate(
+        name="auth-not-supported",
+        listen_port=3128,
+        is_enabled=False,
+        require_auth=True,
+        allow_connect_ports="443",
+        allowed_client_cidrs=None,
+        default_action="deny",
+    )
+    assert profile.require_auth is True
 
 
 @pytest.mark.parametrize(

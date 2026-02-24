@@ -72,6 +72,7 @@ class OutboundProxyProfile(Base):
     listen_port = Column(Integer, default=3128, nullable=False)
     is_enabled = Column(Boolean, default=False, nullable=False)
     require_auth = Column(Boolean, default=False, nullable=False)
+    auth_realm = Column(String, default="WAF Forward Proxy", nullable=False)
     allow_connect_ports = Column(String, default="443,563", nullable=False)
     allowed_client_cidrs = Column(String, nullable=True)
     default_action = Column(String, default="deny", nullable=False)
@@ -124,6 +125,17 @@ class AuditLog(Base):
     error_message = Column(String, nullable=True)
     ip_address = Column(String, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+
+class OutboundProxyUser(Base):
+    __tablename__ = "outbound_proxy_users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String, nullable=False, unique=True, index=True)
+    password_hash = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class MaliciousPattern(Base):

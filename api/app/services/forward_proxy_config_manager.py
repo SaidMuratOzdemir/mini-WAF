@@ -6,7 +6,7 @@ import re
 import shlex
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
@@ -14,6 +14,14 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 
 DEFAULT_FORWARD_PROXY_PORT = 3128
+
+# Common locations for Squid's basic_ncsa_auth helper
+_NCSA_AUTH_SEARCH_PATHS = [
+    "/usr/lib/squid/basic_ncsa_auth",
+    "/usr/lib64/squid/basic_ncsa_auth",
+    "/usr/libexec/squid/basic_ncsa_auth",
+    "/usr/lib/squid3/basic_ncsa_auth",
+]
 
 
 @dataclass(slots=True)
@@ -49,6 +57,8 @@ class ForwardProxyConfigManager:
         validate_command: Sequence[str] | None = None,
         reload_command: Sequence[str] | None = None,
         command_timeout_seconds: int = 15,
+        htpasswd_path: str | Path | None = None,
+        auth_helper_path: str | Path | None = None,
     ) -> None:
         default_template = Path(__file__).resolve().parents[1] / "templates" / "forward_proxy" / "squid.conf.j2"
         self.generated_config_path = Path(
@@ -64,6 +74,21 @@ class ForwardProxyConfigManager:
         )
         self.command_timeout_seconds = int(
             os.getenv("FORWARD_PROXY_COMMAND_TIMEOUT_SECONDS", str(command_timeout_seconds))
+        )
+
+        # htpasswd file sits next to generated squid.conf
+        self.htpasswd_path = Path(
+            htpasswd_path
+            or os.getenv(
+                "FORWARD_PROXY_HTPASSWD_PATH",
+                str(self.generated_config_path.parent / "squid_users"),
+            )
+        )
+        # Resolve auth helper path
+        self.auth_helper_path = str(
+            auth_helper_path
+            or os.getenv("FORWARD_PROXY_AUTH_HELPER_PATH", "")
+            or self._find_ncsa_auth_helper()
         )
 
         self.generated_config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,6 +107,49 @@ class ForwardProxyConfigManager:
         if not command:
             raise ValueError(f"{env_key} cannot be empty.")
         return command
+
+    @staticmethod
+    def _find_ncsa_auth_helper() -> str:
+        """Search well-known paths for Squid basic_ncsa_auth helper binary."""
+        for path in _NCSA_AUTH_SEARCH_PATHS:
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                return path
+        # Fallback: let template render with the most common path;
+        # Squid container image should have it available.
+        return "/usr/lib/squid/basic_ncsa_auth"
+
+    # ── htpasswd generation ──────────────────────────────────────────────
+
+    @staticmethod
+    def generate_htpasswd_content(users: Sequence[object]) -> str:
+        """Build htpasswd-format content from user objects that have
+        ``username`` and ``password_hash`` (bcrypt) attributes.
+
+        Squid's basic_ncsa_auth supports bcrypt hashes prefixed with ``$2b$``.
+        Each line is ``username:hash\\n``.
+        """
+        lines: list[str] = []
+        for user in users:
+            uname = str(getattr(user, "username", "")).strip()
+            phash = str(getattr(user, "password_hash", "")).strip()
+            if not uname or not phash:
+                continue
+            # Sanitise: username must not contain ':' or newlines
+            if ":" in uname or "\n" in uname or "\r" in uname:
+                continue
+            lines.append(f"{uname}:{phash}")
+        return "\n".join(lines) + "\n" if lines else ""
+
+    def write_htpasswd_atomic(self, users: Sequence[object]) -> Path:
+        """Generate and atomically write the htpasswd file with secure permissions."""
+        content = self.generate_htpasswd_content(users)
+        self._write_file_atomic(self.htpasswd_path, content.encode("utf-8"))
+        # Best-effort chmod 0640
+        try:
+            os.chmod(self.htpasswd_path, 0o640)
+        except OSError:
+            pass
+        return self.htpasswd_path
 
     @staticmethod
     def _normalize_connect_ports(raw_value: str | None) -> list[int]:
@@ -174,7 +242,7 @@ class ForwardProxyConfigManager:
             "priority": priority,
         }
 
-    def _template_context(self, profile, rules: Sequence[object] | None) -> dict[str, object]:
+    def _template_context(self, profile, rules: Sequence[object] | None, auth_users: Sequence[object] | None = None) -> dict[str, object]:
         if profile is None:
             return {
                 "listen_port": DEFAULT_FORWARD_PROXY_PORT,
@@ -185,6 +253,10 @@ class ForwardProxyConfigManager:
                 "default_action": "deny",
                 "block_private_destinations": True,
                 "allowed_private_cidrs": [],
+                "require_auth": False,
+                "auth_helper_path": self.auth_helper_path,
+                "htpasswd_path": str(self.htpasswd_path),
+                "auth_realm": "WAF Forward Proxy",
             }
 
         compiled_rules: list[dict[str, object]] = []
@@ -211,6 +283,9 @@ class ForwardProxyConfigManager:
 
         block_private = bool(getattr(profile, "block_private_destinations", True))
 
+        require_auth = bool(getattr(profile, "require_auth", False))
+        auth_realm = str(getattr(profile, "auth_realm", "WAF Forward Proxy") or "WAF Forward Proxy")
+
         return {
             "listen_port": listen_port,
             "connect_ports": self._normalize_connect_ports(getattr(profile, "allow_connect_ports", None)),
@@ -220,11 +295,15 @@ class ForwardProxyConfigManager:
             "default_action": default_action,
             "block_private_destinations": block_private,
             "allowed_private_cidrs": [],
+            "require_auth": require_auth,
+            "auth_helper_path": self.auth_helper_path,
+            "htpasswd_path": str(self.htpasswd_path),
+            "auth_realm": auth_realm,
         }
 
-    def render_proxy_config(self, profile, rules: Sequence[object] | None = None) -> str:
+    def render_proxy_config(self, profile, rules: Sequence[object] | None = None, auth_users: Sequence[object] | None = None) -> str:
         template = self._jinja.get_template(self.template_path.name)
-        rendered = template.render(**self._template_context(profile, rules))
+        rendered = template.render(**self._template_context(profile, rules, auth_users))
         return rendered.strip() + "\n"
 
     @staticmethod
@@ -242,17 +321,22 @@ class ForwardProxyConfigManager:
             temp_path = Path(tmp_file.name)
         os.replace(temp_path, path)
 
-    def write_config_atomic(self, profile, rules: Sequence[object] | None = None) -> Path:
-        config_content = self.render_proxy_config(profile, rules)
+    def write_config_atomic(self, profile, rules: Sequence[object] | None = None, auth_users: Sequence[object] | None = None) -> Path:
+        config_content = self.render_proxy_config(profile, rules, auth_users)
         self._write_file_atomic(self.generated_config_path, config_content.encode("utf-8"))
+        # Write htpasswd alongside when auth is required
+        require_auth = bool(getattr(profile, "require_auth", False)) if profile else False
+        if require_auth:
+            self.write_htpasswd_atomic(auth_users or [])
         return self.generated_config_path
 
-    def sync_proxy_config(self, profile, rules: Sequence[object] | None = None) -> dict[str, object]:
-        written_path = self.write_config_atomic(profile, rules)
+    def sync_proxy_config(self, profile, rules: Sequence[object] | None = None, auth_users: Sequence[object] | None = None) -> dict[str, object]:
+        written_path = self.write_config_atomic(profile, rules, auth_users)
         return {
             "written": str(written_path),
             "profile_id": getattr(profile, "id", None),
             "rule_count": len(rules or []),
+            "auth_user_count": len(auth_users or []),
         }
 
     def _run_command(self, command: Sequence[str]) -> CommandResult:
@@ -291,23 +375,36 @@ class ForwardProxyConfigManager:
     def reload_proxy(self) -> CommandResult:
         return self._run_command(self.reload_command)
 
-    def _capture_state(self) -> bytes | None:
-        if not self.generated_config_path.exists():
-            return None
-        return self.generated_config_path.read_bytes()
+    def _capture_state(self) -> dict[str, bytes | None]:
+        """Capture both config and htpasswd file for rollback."""
+        conf_snapshot = self.generated_config_path.read_bytes() if self.generated_config_path.exists() else None
+        htpasswd_snapshot = self.htpasswd_path.read_bytes() if self.htpasswd_path.exists() else None
+        return {"config": conf_snapshot, "htpasswd": htpasswd_snapshot}
 
-    def _restore_state(self, snapshot: bytes | None) -> None:
-        if snapshot is None:
+    def _restore_state(self, snapshot: dict[str, bytes | None]) -> None:
+        # Restore config
+        conf_data = snapshot.get("config")
+        if conf_data is None:
             self.generated_config_path.unlink(missing_ok=True)
-            return
-        self._write_file_atomic(self.generated_config_path, snapshot)
+        else:
+            self._write_file_atomic(self.generated_config_path, conf_data)
+        # Restore htpasswd
+        htpasswd_data = snapshot.get("htpasswd")
+        if htpasswd_data is None:
+            self.htpasswd_path.unlink(missing_ok=True)
+        else:
+            self._write_file_atomic(self.htpasswd_path, htpasswd_data)
+            try:
+                os.chmod(self.htpasswd_path, 0o640)
+            except OSError:
+                pass
 
-    def apply_with_rollback(self, profile, rules: Sequence[object] | None = None) -> dict[str, object]:
+    def apply_with_rollback(self, profile, rules: Sequence[object] | None = None, auth_users: Sequence[object] | None = None) -> dict[str, object]:
         before_state = self._capture_state()
         sync_result: dict[str, object] | None = None
 
         try:
-            sync_result = self.sync_proxy_config(profile, rules)
+            sync_result = self.sync_proxy_config(profile, rules, auth_users)
 
             validate_result = self.validate_proxy_config()
             if not validate_result.ok:
