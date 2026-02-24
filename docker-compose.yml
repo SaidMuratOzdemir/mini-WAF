@@ -262,6 +262,7 @@ services:
       - nginx_generated_configs:/etc/nginx/conf.d/generated
       - nginx_runtime:/var/run
       - nginx_cert_store:/shared/certs:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       - waf
       - api
@@ -295,6 +296,7 @@ services:
       - nginx_generated_configs:/etc/nginx/conf.d/generated
       - nginx_runtime:/var/run
       - nginx_cert_store:/shared/certs:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       - nginx
     pid: "service:nginx"
