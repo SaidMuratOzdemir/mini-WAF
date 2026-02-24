@@ -25,24 +25,24 @@ A self-contained, auth-request style WAF with an admin dashboard built for learn
 
 ```
                            ┌─────────────────────────┐
- [ Client ] ──HTTP──────▶  │   Nginx (Edge Gateway)   │
-                           │   port 80                 │
-                           └──────┬──────────┬────────┘
+ [ Client ] ──HTTP──────▶  │   Nginx (Edge Gateway)  │
+                           │   port 80               │
+                           └──────┬──────────┬───────┘
                                   │          │
                     auth_request  │          │  proxy_pass
                     (sub-request) │          │  (on 200)
                                   ▼          ▼
                      ┌──────────────┐   ┌──────────────────┐
-                     │  WAF Engine  │   │  Upstream Targets │
-                     │  (FastAPI)   │   │  (your apps)      │
+                     │  WAF Engine  │   │  Upstream Targets│
+                     │  (FastAPI)   │   │  (your apps)     │
                      │  :8000       │   └──────────────────┘
                      └──────┬───┬──┘
                             │   │
                ┌────────────┘   └────────────┐
                ▼                             ▼
        ┌──────────────┐            ┌──────────────┐
-       │    Redis      │            │   MongoDB     │
-       │ ban/whitelist │            │  inspections  │
+       │    Redis     │            │   MongoDB    │
+       │ ban/whitelist│            │  inspections │
        └──────────────┘            └──────────────┘
 
  [ Admin Web (React) ] ──▶ [ Admin API (FastAPI) ] ──▶ Postgres / Redis / MongoDB
@@ -170,48 +170,47 @@ docker compose up --build -d
 | `BAN_TTL_SECONDS` | WAF | How long an IP stays banned (default: 3600) |
 | `INSPECTION_QUEUE_SIZE` | WAF | Max queued inspections (default: 5000) |
 | `INSPECTION_WORKERS` | WAF | Concurrent inspection workers (default: 8) |
+| `ALLOW_PRIVATE_UPSTREAMS` | API | If `true`, allow RFC1918 upstream IP targets. Default: `false` |
+| `NGINX_GENERATED_CONFIG_DIR` | API | Generated site conf output directory (default: `/shared/nginx/generated`) |
+| `NGINX_CONTROL_BASE_URL` | API | Nginx control helper URL (default: `http://nginx-control:8081`) |
 
-**Site-level toggles** (per-site in DB): `xss_enabled`, `sql_enabled`, `vt_enabled`
+**Site-level fields** (per-site in DB):
+- Routing: `host`, `upstream_url`, `is_active`, `preserve_host_header`, `enable_sni`, `websocket_enabled`
+- Inspection toggles: `xss_enabled`, `sql_enabled`, `vt_enabled`, `body_inspection_profile`
 
 ---
 
 ## Adding Protected Sites
 
-Upstream apps are reached by Nginx via Docker-internal DNS. Both the app and Nginx must share the same Docker network.
+Site registration is now automated from Admin UI/API.
 
-1. Run your target app on `waf-core-net`:
-    ```yaml
-    services:
-      my-app:
-        image: my-app-image
-        networks:
-          waf-core-net:
-            aliases: ["my-app-internal"]
-    networks:
-      waf-core-net:
-        external: true
-    ```
-2. Add a server block in `nginx/conf.d/my-app.conf`:
-    ```nginx
-    server {
-        listen 80;
-        server_name my-app.local;
+When you create/update/delete a site:
+1. Site record is saved in PostgreSQL.
+2. API renders per-site Nginx conf into generated volume.
+3. API calls nginx-control helper for `nginx -t`.
+4. If valid, helper triggers `nginx -s reload`.
+5. If validation/reload fails, API rolls back generated conf and DB transaction.
 
-        location = /auth-waf {
-            internal;
-            proxy_pass http://waf_auth_engine/inspect;
-            # copy full auth_request config from nginx.conf
-        }
+Example upstream targets:
+- Docker internal service: `http://httpbin:8080` (set `ALLOW_PRIVATE_UPSTREAMS=true` if needed)
+- LAN IP target: `http://192.168.1.20:8080` (requires `ALLOW_PRIVATE_UPSTREAMS=true`)
+- Public HTTPS target: `https://httpbin.org`
 
-        location / {
-            auth_request /auth-waf;
-            proxy_pass http://my-app-internal;
-        }
-    }
-    ```
-3. Add `127.0.0.1 my-app.local` to `/etc/hosts`.
-4. Register the site in **Admin Web → Sites** with host `my-app.local`.
-5. Restart nginx: `docker compose restart nginx`
+Request path:
+`client -> nginx -> auth_request(/auth-waf) -> waf engine -> upstream`
+
+**Important scope:** This project is reverse proxy WAF only. Explicit forward proxy / CONNECT proxy is out of scope.
+
+---
+
+## VM Deployment Notes
+
+1. Point your domain DNS A/AAAA record to VM public IP.
+2. Open inbound ports `80` (and `443` if TLS termination is added).
+3. Run stack with `docker compose up -d --build`.
+4. Add protected sites from Admin UI (`/admin-ui/`), not by manually editing nginx conf.
+5. For private/LAN upstreams, set `ALLOW_PRIVATE_UPSTREAMS=true`.
+6. Add TLS termination/cert management as a follow-up hardening step if needed.
 
 ---
 
@@ -222,3 +221,4 @@ Upstream apps are reached by Nginx via Docker-internal DNS. Both the app and Ngi
 | VT checks disabled/failing | VT is optional per-site; errors are non-fatal (fail-open) |
 | Logs empty | Confirm `MONGODB_URL` is reachable; `inspections` collection is auto-created at startup |
 | Nginx returning 500 | Check WAF engine is reachable at `http://waf:8000/inspect` |
+| Site create/update returns config apply error | Check `nginx-control` logs and run `docker compose exec nginx nginx -t` |

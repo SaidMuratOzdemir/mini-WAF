@@ -5,6 +5,7 @@ Revises:
 Create Date: 2025-07-28 20:07:00.000000
 
 """
+import os
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.sql import func
@@ -22,6 +23,28 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def get_password_hash(password: str) -> str:
     """Hashes a plain password."""
     return pwd_context.hash(password)
+
+
+def _resolve_admin_password() -> str | None:
+    """
+    Production hardening (Phase 9A.1-A):
+    - In production mode the admin seed password MUST come from
+      ADMIN_INITIAL_PASSWORD env var.  If it is missing, the seed is
+      skipped entirely so the system never ships a well-known credential.
+    - In development mode the env var is used when present; otherwise
+      the legacy default "waf" is kept for convenience.
+    """
+    env = os.getenv("APP_ENV", "development").strip().lower()
+    explicit_pw = os.getenv("ADMIN_INITIAL_PASSWORD", "").strip()
+
+    if env == "production":
+        if not explicit_pw:
+            # Do NOT seed a default admin in production
+            return None
+        return explicit_pw
+
+    # development – use explicit value if provided, else legacy default
+    return explicit_pw or "waf"
 
 
 def upgrade() -> None:
@@ -65,22 +88,24 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('id')
     )
     
-    # Add admin user seed
-    op.bulk_insert(
-        sa.table(
-            'users',
-            sa.Column('username', sa.String()),
-            sa.Column('password_hash', sa.String()),
-            sa.Column('is_admin', sa.Boolean())
-        ),
-        [
-            {
-                'username': 'admin',
-                'password_hash': get_password_hash('waf'),
-                'is_admin': True
-            }
-        ]
-    )
+    # Add admin user seed – skipped in production without ADMIN_INITIAL_PASSWORD
+    admin_password = _resolve_admin_password()
+    if admin_password is not None:
+        op.bulk_insert(
+            sa.table(
+                'users',
+                sa.Column('username', sa.String()),
+                sa.Column('password_hash', sa.String()),
+                sa.Column('is_admin', sa.Boolean())
+            ),
+            [
+                {
+                    'username': 'admin',
+                    'password_hash': get_password_hash(admin_password),
+                    'is_admin': True
+                }
+            ]
+        )
 
 
 def downgrade() -> None:

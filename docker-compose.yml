@@ -6,7 +6,7 @@ services:
     environment:
       - POSTGRES_DB=waf
       - POSTGRES_USER=waf
-      - POSTGRES_PASSWORD=waf
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-waf}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -57,7 +57,8 @@ services:
     expose:
       - "8001"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://waf:waf@postgres:5432/waf
+      - APP_ENV=${APP_ENV:-development}
+      - DATABASE_URL=postgresql+asyncpg://waf:${POSTGRES_PASSWORD:-waf}@postgres:5432/waf
       - REDIS_URL=redis://redis:6379
       - MONGODB_URL=mongodb://mongodb:27017/waf_logs
       - JWT_SECRET=${JWT_SECRET}
@@ -82,6 +83,8 @@ services:
       - FORWARD_PROXY_CONTROL_BASE_URL=${FORWARD_PROXY_CONTROL_BASE_URL:-http://forward-proxy-control:8082}
       - FORWARD_PROXY_CONTROL_TOKEN=${FORWARD_PROXY_CONTROL_TOKEN:-change-me-forward-proxy-control-token}
       - FORWARD_PROXY_COMMAND_TIMEOUT_SECONDS=${FORWARD_PROXY_COMMAND_TIMEOUT_SECONDS:-15}
+      - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost","http://localhost:5173"]}
     volumes:
       - nginx_generated_configs:/shared/nginx/generated
       - nginx_cert_store:/shared/certs
@@ -103,7 +106,7 @@ services:
     expose:
       - "8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://waf:waf@postgres:5432/waf
+      - DATABASE_URL=postgresql+asyncpg://waf:${POSTGRES_PASSWORD:-waf}@postgres:5432/waf
       - REDIS_URL=redis://redis:6379
       - MONGODB_URL=mongodb://mongodb:27017/waf_logs
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
