@@ -1,7 +1,11 @@
 # api/app/routers/system.py
 
 import json
+import os
 from datetime import datetime, timezone
+from typing import Any
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 import redis.asyncio as redis
 
@@ -12,14 +16,69 @@ from app.services.audit_logger import get_audit_failure_count
 
 router = APIRouter(prefix="/system", tags=["System"])
 
+# ── Phase 9A.2-E: Control-plane helper URLs ─────────────────────────
+_NGINX_CONTROL_URL = os.getenv(
+    "NGINX_CONTROL_BASE_URL", "http://nginx-control:8081"
+).rstrip("/")
+_FP_CONTROL_URL = os.getenv(
+    "FORWARD_PROXY_CONTROL_BASE_URL", "http://forward-proxy-control:8082"
+).rstrip("/")
+_WAF_ENGINE_URL = os.getenv(
+    "WAF_ENGINE_BASE_URL", "http://waf:8000"
+).rstrip("/")
+
+
+async def _probe(url: str, timeout: float = 2.0) -> dict[str, Any]:
+    """Fire a GET to the given health URL; return status dict."""
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url)
+        return {"reachable": True, "status_code": resp.status_code}
+    except httpx.TimeoutException:
+        return {"reachable": False, "error": "timeout"}
+    except Exception as exc:
+        return {"reachable": False, "error": str(exc)[:120]}
+
+
 @router.get("/health")
 async def health_check():
-    """Return the current health status of the API."""
+    """Return enriched health status including helper reachability."""
     audit_failures = get_audit_failure_count()
+
+    # Probe control-plane helpers and WAF engine in parallel
+    import asyncio
+    nginx_probe, fp_probe, waf_probe = await asyncio.gather(
+        _probe(f"{_NGINX_CONTROL_URL}/health"),
+        _probe(f"{_FP_CONTROL_URL}/health"),
+        _probe(f"{_WAF_ENGINE_URL}/health"),
+    )
+
+    # Parse WAF engine TTL info if available
+    waf_ttl_days = None
+    if waf_probe.get("reachable"):
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                resp = await client.get(f"{_WAF_ENGINE_URL}/health")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    waf_ttl_days = data.get("inspection_ttl_days")
+        except Exception:
+            pass
+
+    overall = "healthy"
+    if audit_failures > 0:
+        overall = "degraded"
+
     return {
-        "status": "degraded" if audit_failures > 0 else "healthy",
+        "status": overall,
         "timestamp": datetime.now(timezone.utc),
         "audit_persistence_failures": audit_failures,
+        "helpers": {
+            "nginx_control": nginx_probe,
+            "forward_proxy_control": fp_probe,
+            "waf_engine": waf_probe,
+        },
+        "inspection_ttl_days": waf_ttl_days,
     }
 
 @router.get("/vt-cache/stats", response_model=dict)

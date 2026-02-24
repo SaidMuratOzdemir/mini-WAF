@@ -69,9 +69,28 @@ async def lifespan(app: FastAPI):
     """
     Manages application startup and shutdown events.
     """
+    _startup_logger = logging.getLogger("app.startup")
+
     # On startup: Initialize the Redis connection pool
     dependencies.redis_pool = redis.ConnectionPool.from_url(
         settings.REDIS_URL, max_connections=10, decode_responses=True
+    )
+
+    # ── Phase 9A.2-E: Structured startup summary ────────────────────
+    _startup_logger.info(
+        "STARTUP project=%s version=%s env=%s api_prefix=%s "
+        "redis=%s cors_origins=%d",
+        settings.PROJECT_NAME,
+        settings.PROJECT_VERSION,
+        settings.APP_ENV,
+        settings.API_V1_STR,
+        settings.REDIS_URL.split("@")[-1] if "@" in settings.REDIS_URL else settings.REDIS_URL,
+        len(settings.CORS_ORIGINS),
+    )
+    _startup_logger.info(
+        "STARTUP helpers nginx_control_token=%s forward_proxy_control_token=%s",
+        "set" if settings.NGINX_CONTROL_TOKEN else "MISSING",
+        "set" if settings.FORWARD_PROXY_CONTROL_TOKEN else "MISSING",
     )
 
     # The application is now ready to run
