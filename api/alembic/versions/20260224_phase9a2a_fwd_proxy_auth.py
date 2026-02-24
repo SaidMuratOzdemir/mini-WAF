@@ -1,6 +1,6 @@
 """Phase 9A.2-A: add outbound_proxy_users table and auth_realm to profiles
 
-Revision ID: phase9a2a_forward_proxy_basic_auth
+Revision ID: phase9a2a_fwd_proxy_auth
 Revises: phase9a1c_private_dest_acl
 Create Date: 2026-02-24 16:00:00.000000
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = "phase9a2a_forward_proxy_basic_auth"
+revision = "phase9a2a_fwd_proxy_auth"
 down_revision = "phase9a1c_private_dest_acl"
 branch_labels = None
 depends_on = None
