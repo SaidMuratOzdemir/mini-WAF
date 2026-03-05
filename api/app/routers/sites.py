@@ -204,7 +204,7 @@ async def check_external_site_health(host: str) -> str:
     """Check if a site is healthy by making HTTP request through Nginx edge."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            url = "http://nginx:80/"
+            url = "http://nginx:8088/"
             headers = {"Host": host}
             response = await client.get(url, headers=headers)
             if 200 <= response.status_code < 400:
