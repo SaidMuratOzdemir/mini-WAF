@@ -1,0 +1,115 @@
+version: "3.9"
+
+# Admin-only stack override
+# Removes forward-proxy, forward-proxy-control, waf, waf-web, nginx, httpbin
+# Keeps only: postgres, redis, mongodb, api, nginx-control
+
+services:
+  # Database and cache – KEEP
+  postgres:
+    profiles:
+      - ""  # default
+
+  redis:
+    profiles:
+      - ""  # default
+
+  mongodb:
+    profiles:
+      - ""  # default
+
+  # API backend – KEEP (removed forward-proxy dependency)
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    expose:
+      - "8001"
+    environment:
+      - APP_ENV=${APP_ENV:-development}
+      - DATABASE_URL=postgresql+asyncpg://waf:${POSTGRES_PASSWORD:-waf}@postgres:5432/waf
+      - REDIS_URL=redis://redis:6379
+      - MONGODB_URL=mongodb://mongodb:27017/waf_logs
+      - JWT_SECRET=${JWT_SECRET}
+      - PORT=8001
+      - NGINX_GENERATED_CONFIG_DIR=${NGINX_GENERATED_CONFIG_DIR:-/shared/nginx/generated}
+      - NGINX_TEST_COMMAND=python /app/app/services/nginx_control_client.py validate
+      - NGINX_RELOAD_COMMAND=python /app/app/services/nginx_control_client.py reload
+      - NGINX_CONTROL_BASE_URL=${NGINX_CONTROL_BASE_URL:-http://nginx-control:8081}
+      - NGINX_CONTROL_TOKEN=${NGINX_CONTROL_TOKEN:-change-me-nginx-control-token}
+      - NGINX_COMMAND_TIMEOUT_SECONDS=${NGINX_COMMAND_TIMEOUT_SECONDS:-15}
+      - ALLOW_PRIVATE_UPSTREAMS=${ALLOW_PRIVATE_UPSTREAMS:-false}
+      - ALLOWED_PRIVATE_CIDRS=${ALLOWED_PRIVATE_CIDRS:-}
+      - DENIED_CIDRS=${DENIED_CIDRS:-}
+      - ALLOWED_UPSTREAM_PORTS=${ALLOWED_UPSTREAM_PORTS:-}
+      - DENIED_HOSTNAMES=${DENIED_HOSTNAMES:-}
+      - ALLOWED_HOSTNAME_SUFFIXES=${ALLOWED_HOSTNAME_SUFFIXES:-}
+      - CERT_STORAGE_DIR=${CERT_STORAGE_DIR:-/shared/certs}
+      - NGINX_UPSTREAM_CA_BUNDLE_PATH=${NGINX_UPSTREAM_CA_BUNDLE_PATH:-/etc/ssl/certs/ca-certificates.crt}
+      - FORWARD_PROXY_GENERATED_CONFIG_PATH=${FORWARD_PROXY_GENERATED_CONFIG_PATH:-/shared/forward-proxy/generated/squid.conf}
+      - FORWARD_PROXY_HTPASSWD_PATH=${FORWARD_PROXY_HTPASSWD_PATH:-/shared/forward-proxy/generated/squid_users}
+      - FORWARD_PROXY_TEST_COMMAND=python /app/app/services/forward_proxy_control_client.py validate
+      - FORWARD_PROXY_RELOAD_COMMAND=python /app/app/services/forward_proxy_control_client.py reload
+      - FORWARD_PROXY_CONTROL_BASE_URL=${FORWARD_PROXY_CONTROL_BASE_URL:-http://forward-proxy-control:8082}
+      - FORWARD_PROXY_CONTROL_TOKEN=${FORWARD_PROXY_CONTROL_TOKEN:-change-me-forward-proxy-control-token}
+      - FORWARD_PROXY_COMMAND_TIMEOUT_SECONDS=${FORWARD_PROXY_COMMAND_TIMEOUT_SECONDS:-15}
+      - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost","http://localhost:5173"]}
+    volumes:
+      - nginx_generated_configs:/shared/nginx/generated
+      - nginx_cert_store:/shared/certs
+      - forward_proxy_generated_configs:/shared/forward-proxy/generated
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/api/v1/system/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    mem_limit: 512m
+    cpus: 1.0
+    networks:
+      - waf-core-net
+      - waf-control-net
+    restart: unless-stopped
+
+  # Nginx control – DISABLED (nginx is disabled, so control not needed for admin UI)
+  nginx-control:
+    profiles:
+      - disabled
+
+  # Disable these for admin workflow
+  forward-proxy:
+    profiles:
+      - disabled
+
+  forward-proxy-control:
+    profiles:
+      - disabled
+
+  waf:
+    profiles:
+      - disabled
+
+  waf-web:
+    profiles:
+      - disabled
+
+  nginx:
+    profiles:
+      - disabled
+
+  httpbin:
+    profiles:
+      - disabled

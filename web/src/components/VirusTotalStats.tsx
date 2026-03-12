@@ -1,284 +1,232 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
-    Card,
-    CardContent,
-    Typography,
-    Box,
-    Button,
-    Chip,
-    Alert,
-    CircularProgress,
-    Divider,
-    Snackbar
-} from '@mui/material';
-import {
-    Security as SecurityIcon,
-    Refresh as RefreshIcon,
-    DeleteSweep as CleanupIcon,
-    CheckCircle as CheckIcon,
-    Error as ErrorIcon,
-    ManageAccounts as ManageIcon
-} from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
-import { apiFetch } from '../api/client';
-
+  Shield,
+  RefreshCw,
+  Trash2,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Info,
+} from "lucide-react";
+import { apiFetch } from "@/api/client";
+import { toast } from "sonner";
 
 interface CacheStats {
-    date: string;
-    total_entries: number;
-    malicious_count: number;
-    clean_count: number;
-    error_count: number;
+  date: string;
+  total_entries: number;
+  malicious_count: number;
+  clean_count: number;
+  error_count: number;
 }
 
 interface CleanupResult {
-    message: string;
-    cleaned_entries: number;
+  message: string;
+  cleaned_entries: number;
 }
 
 const VirusTotalStats = () => {
-    const [stats, setStats] = useState<CacheStats | null>(null);
-    const [loading, setLoading] = useState(false);
-    const [cleanupLoading, setCleanupLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [snackbarOpen, setSnackbarOpen] = useState(false);
-    const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [stats, setStats] = useState<CacheStats | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [cleanupLoading, setCleanupLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-    const navigate = useNavigate();
-
-    const fetchStats = async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            const data = await apiFetch<CacheStats>('/system/vt-cache/stats');
-            setStats(data);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Unknown error');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleCleanup = async () => {
-        setCleanupLoading(true);
-        try {
-            const result = await apiFetch<CleanupResult>('/system/vt-cache/cleanup', { method: 'POST' });
-            setSnackbarMessage(`${result.cleaned_entries} cache entries cleaned`);
-            setSnackbarOpen(true);
-            await fetchStats();
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Cache cleanup error');
-        } finally {
-            setCleanupLoading(false);
-        }
-    };
-
-    const handleIPManagement = () => {
-        navigate('/ip-management');
-    };
-
-    useEffect(() => {
-        fetchStats();
-
-        // Auto-refresh every 5 minutes
-        const interval = setInterval(fetchStats, 5 * 60 * 1000);
-        return () => clearInterval(interval);
-    }, []);
-
-    if (loading && !stats) {
-        return (
-            <Card>
-                <CardContent>
-                    <Box display="flex" alignItems="center" gap={1} mb={2}>
-                        <SecurityIcon />
-                        <Typography variant="h6">VirusTotal Cache Statistics</Typography>
-                    </Box>
-                    <Box display="flex" justifyContent="center" p={2}>
-                        <CircularProgress />
-                    </Box>
-                </CardContent>
-            </Card>
-        );
+  const fetchStats = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await apiFetch<CacheStats>("/system/vt-cache/stats");
+      setStats(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setLoading(false);
     }
+  };
 
-    if (error) {
-        return (
-            <Card>
-                <CardContent>
-                    <Box display="flex" alignItems="center" gap={1} mb={2}>
-                        <SecurityIcon />
-                        <Typography variant="h6">VirusTotal Cache Statistics</Typography>
-                    </Box>
-                    <Alert severity="error">
-                        <Typography>{error}</Typography>
-                        <Button onClick={fetchStats} size="small" startIcon={<RefreshIcon />}>
-                            Retry
-                        </Button>
-                    </Alert>
-                </CardContent>
-            </Card>
-        );
+  const handleCleanup = async () => {
+    setCleanupLoading(true);
+    try {
+      const result = await apiFetch<CleanupResult>("/system/vt-cache/cleanup", {
+        method: "POST",
+      });
+      toast.success(`${result.cleaned_entries} cache entries cleaned`);
+      await fetchStats();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Cache cleanup error");
+    } finally {
+      setCleanupLoading(false);
     }
+  };
 
-    if (!stats) {
-        return null;
-    }
+  useEffect(() => {
+    fetchStats();
+    const interval = setInterval(fetchStats, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
-    const maliciousPercentage = stats.total_entries > 0
-        ? Math.round((stats.malicious_count / stats.total_entries) * 100)
-        : 0;
-
-    const cleanPercentage = stats.total_entries > 0
-        ? Math.round((stats.clean_count / stats.total_entries) * 100)
-        : 0;
-
+  if (loading && !stats) {
     return (
-        <>
-            <Card>
-                <CardContent>
-                    <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
-                        <Box display="flex" alignItems="center" gap={1}>
-                            <SecurityIcon />
-                            <Typography variant="h6">VirusTotal Cache Statistics</Typography>
-                        </Box>
-                    </Box>
-
-                    <Typography variant="body2" color="text.secondary" mb={2}>
-                        Date: {stats.date}
-                    </Typography>
-
-                    <Box display="flex" flexWrap="wrap" gap={2}>
-                        <Box flex="1" minWidth="200px" textAlign="center" p={2} bgcolor="background.paper" borderRadius={1}>
-                            <Typography variant="h4" color="primary">
-                                {stats.total_entries}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                                Total IP Entries
-                            </Typography>
-                        </Box>
-
-                        <Box flex="1" minWidth="200px" textAlign="center" p={2} bgcolor="background.paper" borderRadius={1}>
-                            <Typography variant="h4" color="error">
-                                {stats.malicious_count}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                                Malicious IP
-                            </Typography>
-                            <Chip
-                                icon={<ErrorIcon />}
-                                label={`${maliciousPercentage}%`}
-                                color="error"
-                                size="small"
-                                sx={{ mt: 1 }}
-                            />
-                        </Box>
-
-                        <Box flex="1" minWidth="200px" textAlign="center" p={2} bgcolor="background.paper" borderRadius={1}>
-                            <Typography variant="h4" color="success.main">
-                                {stats.clean_count}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                                Clean IP
-                            </Typography>
-                            <Chip
-                                icon={<CheckIcon />}
-                                label={`${cleanPercentage}%`}
-                                color="success"
-                                size="small"
-                                sx={{ mt: 1 }}
-                            />
-                        </Box>
-
-                        <Box flex="1" minWidth="200px" textAlign="center" p={2} bgcolor="background.paper" borderRadius={1}>
-                            <Typography variant="h4" color="warning.main">
-                                {stats.error_count}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                                Error Entries
-                            </Typography>
-                        </Box>
-                    </Box>
-
-                    <Divider sx={{ my: 2 }} />
-
-                    <Box display="flex" gap={2} justifyContent="center">
-                        <Button
-                            variant="contained"
-                            color="primary"
-                            startIcon={<SecurityIcon />}
-                            onClick={() => navigate('/patterns')}
-                        >
-                            Validation Patterns
-                        </Button>
-
-                        <Button
-                            variant="contained"
-                            color="primary"
-                            startIcon={<ManageIcon />}
-                            onClick={handleIPManagement}
-                        >
-                            IP Management
-                        </Button>
-                        <Button
-                            variant="contained"
-                            color="primary"
-                            startIcon={<SecurityIcon />}
-                            onClick={() => navigate('/logs')}
-                        >
-                            Logs
-                        </Button>
-                        <Button
-                            variant="contained"
-                            color="primary"
-                            startIcon={<ManageIcon />}
-                            onClick={() => navigate('/forward-proxy')}
-                        >
-                            Outbound Proxy
-                        </Button>
-
-                        <Button
-                            variant="outlined"
-                            color="secondary"
-                            startIcon={<RefreshIcon />}
-                            onClick={fetchStats}
-                        >
-                            Refresh
-                        </Button>
-                        <Button
-                            variant="outlined"
-                            color="error"
-                            startIcon={cleanupLoading ? <CircularProgress size={16} /> : <CleanupIcon />}
-                            onClick={handleCleanup}
-                            disabled={cleanupLoading}
-                        >
-                            {cleanupLoading ? 'Cleaning...' : 'Clean Cache'}
-                        </Button>
-                    </Box>
-
-                    <Divider sx={{ my: 2 }} />
-
-                    <Alert severity="info" icon={<SecurityIcon />}>
-                        <Typography variant="body2">
-                            The VirusTotal cache system checks IP addresses daily and stores the results. This avoids repeat lookups for requests from the same IP and improves performance.
-                        </Typography>
-                    </Alert>
-
-                    {loading && (
-                        <Box display="flex" justifyContent="center" mt={2}>
-                            <CircularProgress size={20} />
-                        </Box>
-                    )}
-                </CardContent>
-            </Card>
-
-            <Snackbar
-                open={snackbarOpen}
-                autoHideDuration={4000}
-                onClose={() => setSnackbarOpen(false)}
-                message={snackbarMessage}
-            />
-        </>
+      <Card className="border-zinc-800/70 bg-zinc-900/50">
+        <CardContent className="p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Shield className="h-5 w-5 text-emerald-400" />
+            <span className="font-semibold text-zinc-100">VirusTotal Cache</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => (
+              <Skeleton key={i} className="h-20 rounded-lg bg-zinc-800/50" />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
     );
+  }
+
+  if (error && !stats) {
+    return (
+      <Card className="border-zinc-800/70 bg-zinc-900/50">
+        <CardContent className="p-6">
+          <Alert variant="destructive" className="border-red-900/50 bg-red-950/30">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription className="flex items-center justify-between">
+              <span>{error}</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={fetchStats}
+                className="text-red-300 hover:text-red-200"
+              >
+                <RefreshCw className="h-3 w-3 mr-1" /> Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!stats) return null;
+
+  const maliciousPercentage =
+    stats.total_entries > 0
+      ? Math.round((stats.malicious_count / stats.total_entries) * 100)
+      : 0;
+
+  const cleanPercentage =
+    stats.total_entries > 0
+      ? Math.round((stats.clean_count / stats.total_entries) * 100)
+      : 0;
+
+  const statCards = [
+    {
+      label: "Total Entries",
+      value: stats.total_entries,
+      icon: Shield,
+      color: "text-sky-400",
+      bg: "bg-sky-500/10",
+      border: "border-sky-500/20",
+    },
+    {
+      label: "Malicious",
+      value: stats.malicious_count,
+      badge: `${maliciousPercentage}%`,
+      icon: XCircle,
+      color: "text-red-400",
+      bg: "bg-red-500/10",
+      border: "border-red-500/20",
+    },
+    {
+      label: "Clean",
+      value: stats.clean_count,
+      badge: `${cleanPercentage}%`,
+      icon: CheckCircle2,
+      color: "text-emerald-400",
+      bg: "bg-emerald-500/10",
+      border: "border-emerald-500/20",
+    },
+    {
+      label: "Errors",
+      value: stats.error_count,
+      icon: AlertTriangle,
+      color: "text-amber-400",
+      bg: "bg-amber-500/10",
+      border: "border-amber-500/20",
+    },
+  ];
+
+  return (
+    <Card className="border-zinc-800/70 bg-zinc-900/50">
+      <CardContent className="p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Shield className="h-5 w-5 text-emerald-400" />
+            <span className="font-semibold text-zinc-100">VirusTotal Cache</span>
+            <span className="text-xs text-zinc-500">{stats.date}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={fetchStats}
+              disabled={loading}
+              className="text-zinc-400 hover:text-zinc-200"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 mr-1 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCleanup}
+              disabled={cleanupLoading}
+              className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+            >
+              {cleanupLoading ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5 mr-1" />
+              )}
+              Clean
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {statCards.map((card) => (
+            <div
+              key={card.label}
+              className={`rounded-lg border ${card.border} ${card.bg} p-4 text-center`}
+            >
+              <card.icon className={`h-5 w-5 mx-auto mb-2 ${card.color}`} />
+              <div className={`text-2xl font-bold ${card.color}`}>{card.value}</div>
+              <div className="text-xs text-zinc-400 mt-1">{card.label}</div>
+              {card.badge && (
+                <Badge
+                  variant="secondary"
+                  className={`mt-1.5 text-[10px] ${card.bg} ${card.color} border ${card.border}`}
+                >
+                  {card.badge}
+                </Badge>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-zinc-800/50 bg-zinc-900/30 p-3">
+          <Info className="h-4 w-4 text-zinc-500 mt-0.5 shrink-0" />
+          <p className="text-xs text-zinc-500">
+            VirusTotal cache checks IP addresses daily and stores results to avoid repeat lookups.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
 };
 
 export default VirusTotalStats;

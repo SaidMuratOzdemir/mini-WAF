@@ -1,537 +1,592 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect } from "react";
 import {
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-    Button,
-    TextField,
-    FormControlLabel,
-    Switch,
-    Box,
-    Alert,
-    CircularProgress,
-    MenuItem
-} from '@mui/material';
-import type { Site, SiteCreate } from '../types/Site';
-import { updateSite } from '../api/sites';
-import type { Certificate } from '../types/Certificate';
-import { fetchCertificates } from '../api/certificates';
-import { useAuth } from '../context/AuthContext';
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { AlertTriangle, Loader2, Save } from "lucide-react";
+import type { Site, SiteCreate } from "@/types/Site";
+import { updateSite } from "@/api/sites";
+import type { Certificate } from "@/types/Certificate";
+import { fetchCertificates } from "@/api/certificates";
+import { useAuth } from "@/context/AuthContext";
+import { toast } from "sonner";
 
 interface EditSiteModalProps {
-    open: boolean;
-    site: Site | null;
-    onClose: () => void;
-    onSuccess: () => void;
+  open: boolean;
+  site: Site | null;
+  onClose: () => void;
+  onSuccess: () => void;
 }
 
 function isLikelyPrivateUpstream(rawUrl: string): boolean {
-    try {
-        const parsed = new URL(rawUrl.trim());
-        const host = parsed.hostname.toLowerCase();
-        if (host === 'localhost' || host.endsWith('.local')) return true;
-        if (/^127\./.test(host)) return true;
-        if (host === '::1') return true;
-        if (/^10\./.test(host)) return true;
-        if (/^192\.168\./.test(host)) return true;
-        if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)) return true;
-        return false;
-    } catch {
-        return false;
-    }
+  try {
+    const parsed = new URL(rawUrl.trim());
+    const host = parsed.hostname.toLowerCase();
+    if (host === "localhost" || host.endsWith(".local")) return true;
+    if (/^127\./.test(host)) return true;
+    if (host === "::1") return true;
+    if (/^10\./.test(host)) return true;
+    if (/^192\.168\./.test(host)) return true;
+    if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)) return true;
+    return false;
+  } catch {
+    return false;
+  }
 }
 
-const EditSiteModal = ({ open, site, onClose, onSuccess }: EditSiteModalProps) => {
-    const { role } = useAuth();
-    const [certificates, setCertificates] = useState<Certificate[]>([]);
-    const [formData, setFormData] = useState<SiteCreate>({
-        host: '',
-        name: '',
-        upstream_url: '',
-        is_active: true,
-        preserve_host_header: false,
-        enable_sni: true,
-        websocket_enabled: true,
-        sse_enabled: false,
-        body_inspection_profile: 'default',
-        client_max_body_size_mb: null,
-        proxy_request_buffering: null,
-        proxy_read_timeout_sec: 60,
-        proxy_send_timeout_sec: 60,
-        proxy_connect_timeout_sec: 10,
-        proxy_redirect_mode: 'default',
-        cookie_rewrite_enabled: false,
-        waf_decision_mode: 'fail_close',
-        tls_enabled: false,
-        http_redirect_to_https: false,
-        tls_certificate_id: null,
-        upstream_tls_verify: true,
-        upstream_tls_server_name_override: null,
-        hsts_enabled: false,
-        xss_enabled: true,
-        sql_enabled: true,
-        vt_enabled: false
+const EditSiteModal = ({
+  open,
+  site,
+  onClose,
+  onSuccess,
+}: EditSiteModalProps) => {
+  const { role } = useAuth();
+  const [certificates, setCertificates] = useState<Certificate[]>([]);
+  const [formData, setFormData] = useState<SiteCreate>({
+    host: "",
+    name: "",
+    upstream_url: "",
+    is_active: true,
+    preserve_host_header: false,
+    enable_sni: true,
+    websocket_enabled: true,
+    sse_enabled: false,
+    body_inspection_profile: "default",
+    client_max_body_size_mb: null,
+    proxy_request_buffering: null,
+    proxy_read_timeout_sec: 60,
+    proxy_send_timeout_sec: 60,
+    proxy_connect_timeout_sec: 10,
+    proxy_redirect_mode: "default",
+    cookie_rewrite_enabled: false,
+    waf_decision_mode: "fail_close",
+    tls_enabled: false,
+    http_redirect_to_https: false,
+    tls_certificate_id: null,
+    upstream_tls_verify: true,
+    upstream_tls_server_name_override: null,
+    hsts_enabled: false,
+    xss_enabled: true,
+    sql_enabled: true,
+    vt_enabled: false,
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (role !== "super_admin") {
+      setCertificates([]);
+      return;
+    }
+    const loadCertificates = async () => {
+      try {
+        const data = await fetchCertificates();
+        setCertificates(data);
+      } catch (e) {
+        console.error("Failed to load certificates", e);
+      }
+    };
+    void loadCertificates();
+  }, [role]);
+
+  useEffect(() => {
+    if (site) {
+      setFormData({
+        host: site.host,
+        name: site.name,
+        upstream_url: site.upstream_url,
+        is_active: site.is_active,
+        preserve_host_header: site.preserve_host_header,
+        enable_sni: site.enable_sni,
+        websocket_enabled: site.websocket_enabled,
+        sse_enabled: site.sse_enabled,
+        body_inspection_profile: site.body_inspection_profile,
+        client_max_body_size_mb: site.client_max_body_size_mb,
+        proxy_request_buffering: site.proxy_request_buffering,
+        proxy_read_timeout_sec: site.proxy_read_timeout_sec,
+        proxy_send_timeout_sec: site.proxy_send_timeout_sec,
+        proxy_connect_timeout_sec: site.proxy_connect_timeout_sec,
+        proxy_redirect_mode: site.proxy_redirect_mode,
+        cookie_rewrite_enabled: site.cookie_rewrite_enabled,
+        waf_decision_mode: site.waf_decision_mode,
+        tls_enabled: site.tls_enabled,
+        http_redirect_to_https: site.http_redirect_to_https,
+        tls_certificate_id: site.tls_certificate_id,
+        upstream_tls_verify: site.upstream_tls_verify,
+        upstream_tls_server_name_override:
+          site.upstream_tls_server_name_override,
+        hsts_enabled: site.hsts_enabled,
+        xss_enabled: site.xss_enabled,
+        sql_enabled: site.sql_enabled,
+        vt_enabled: site.vt_enabled,
+      });
+    }
+    setError(null);
+  }, [site]);
+
+  const set = <K extends keyof SiteCreate>(key: K, value: SiteCreate[K]) => {
+    setFormData((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === "tls_enabled" && value === false) {
+        next.http_redirect_to_https = false;
+        next.hsts_enabled = false;
+        next.tls_certificate_id = null;
+      }
+      return next;
     });
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+  };
 
-    // Reset form when site changes
-    useEffect(() => {
-        if (role !== 'super_admin') {
-            setCertificates([]);
-            return;
-        }
-        const loadCertificates = async () => {
-            try {
-                const data = await fetchCertificates();
-                setCertificates(data);
-            } catch (e) {
-                console.error('Failed to load certificates', e);
-            }
-        };
-        void loadCertificates();
-    }, [role]);
+  const handleSubmit = async () => {
+    if (!site) return;
 
-    useEffect(() => {
-        if (site) {
-            setFormData({
-                host: site.host,
-                name: site.name,
-                upstream_url: site.upstream_url,
-                is_active: site.is_active,
-                preserve_host_header: site.preserve_host_header,
-                enable_sni: site.enable_sni,
-                websocket_enabled: site.websocket_enabled,
-                sse_enabled: site.sse_enabled,
-                body_inspection_profile: site.body_inspection_profile,
-                client_max_body_size_mb: site.client_max_body_size_mb,
-                proxy_request_buffering: site.proxy_request_buffering,
-                proxy_read_timeout_sec: site.proxy_read_timeout_sec,
-                proxy_send_timeout_sec: site.proxy_send_timeout_sec,
-                proxy_connect_timeout_sec: site.proxy_connect_timeout_sec,
-                proxy_redirect_mode: site.proxy_redirect_mode,
-                cookie_rewrite_enabled: site.cookie_rewrite_enabled,
-                waf_decision_mode: site.waf_decision_mode,
-                tls_enabled: site.tls_enabled,
-                http_redirect_to_https: site.http_redirect_to_https,
-                tls_certificate_id: site.tls_certificate_id,
-                upstream_tls_verify: site.upstream_tls_verify,
-                upstream_tls_server_name_override: site.upstream_tls_server_name_override,
-                hsts_enabled: site.hsts_enabled,
-                xss_enabled: site.xss_enabled,
-                sql_enabled: site.sql_enabled,
-                vt_enabled: site.vt_enabled
-            });
-        }
-        setError(null);
-    }, [site]);
+    if (!formData.name.trim()) {
+      setError("Site name is required.");
+      return;
+    }
+    if (!formData.host.trim()) {
+      setError("Host field is required.");
+      return;
+    }
+    if (!formData.upstream_url.trim()) {
+      setError("Upstream URL is required.");
+      return;
+    }
+    if (
+      formData.proxy_read_timeout_sec < 1 ||
+      formData.proxy_send_timeout_sec < 1 ||
+      formData.proxy_connect_timeout_sec < 1
+    ) {
+      setError("Proxy timeout değerleri 1 saniyeden büyük olmalıdır.");
+      return;
+    }
+    if (
+      formData.client_max_body_size_mb !== null &&
+      (formData.client_max_body_size_mb < 1 ||
+        formData.client_max_body_size_mb > 1024)
+    ) {
+      setError("Body size 1..1024 MB aralığında olmalıdır.");
+      return;
+    }
+    if (
+      role !== "super_admin" &&
+      isLikelyPrivateUpstream(formData.upstream_url)
+    ) {
+      setError(
+        "Private/LAN upstream tanımı yalnızca super_admin rolü için izinlidir."
+      );
+      return;
+    }
+    if (
+      formData.tls_enabled &&
+      !formData.tls_certificate_id &&
+      certificates.length === 0
+    ) {
+      setError(
+        "TLS enabled requires a certificate (upload one or configure a default)."
+      );
+      return;
+    }
 
-    const handleInputChange = (field: keyof SiteCreate) => (
-        event: React.ChangeEvent<HTMLInputElement>
-    ) => {
-        const rawValue = event.target.type === 'checkbox'
-            ? event.target.checked
-            : event.target.value;
-        const value = field === 'tls_certificate_id'
-            ? (rawValue ? Number(rawValue) : null)
-            : field === 'client_max_body_size_mb'
-                ? (rawValue ? Number(rawValue) : null)
-                : field === 'proxy_read_timeout_sec' || field === 'proxy_send_timeout_sec' || field === 'proxy_connect_timeout_sec'
-                    ? Number(rawValue)
-                    : field === 'proxy_request_buffering'
-                        ? (rawValue === '' ? null : rawValue === 'true')
-                        : (field === 'upstream_tls_server_name_override' ? (rawValue || null) : rawValue);
+    setLoading(true);
+    setError(null);
 
-        setFormData(prev => {
-            const next: SiteCreate = {
-                ...prev,
-                [field]: value
-            } as SiteCreate;
-            if (field === 'tls_enabled' && value === false) {
-                next.http_redirect_to_https = false;
-                next.hsts_enabled = false;
-                next.tls_certificate_id = null;
-            }
-            return next;
-        });
-    };
+    try {
+      await updateSite(site.id, formData);
+      toast.success("Site updated successfully!");
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Update failed");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const handleSubmit = async () => {
-        if (!site) return;
+  const upstreamIsHttps = formData.upstream_url
+    .trim()
+    .toLowerCase()
+    .startsWith("https://");
 
-        if (!formData.name.trim()) {
-            setError('Site name is required.');
-            return;
-        }
-        if (!formData.host.trim()) {
-            setError('Host field is required.');
-            return;
-        }
-        if (!formData.upstream_url.trim()) {
-            setError('Upstream URL is required.');
-            return;
-        }
-        if (
-            formData.proxy_read_timeout_sec < 1
-            || formData.proxy_send_timeout_sec < 1
-            || formData.proxy_connect_timeout_sec < 1
-        ) {
-            setError('Proxy timeout değerleri 1 saniyeden büyük olmalıdır.');
-            return;
-        }
-        if (
-            formData.client_max_body_size_mb !== null
-            && (formData.client_max_body_size_mb < 1 || formData.client_max_body_size_mb > 1024)
-        ) {
-            setError('Body size 1..1024 MB aralığında olmalıdır.');
-            return;
-        }
-        if (role !== 'super_admin' && isLikelyPrivateUpstream(formData.upstream_url)) {
-            setError('Private/LAN upstream tanımı yalnızca super_admin rolü için izinlidir.');
-            return;
-        }
-        if (formData.tls_enabled && !formData.tls_certificate_id && certificates.length === 0) {
-            setError('TLS enabled requires a certificate (upload one or configure a default).');
-            return;
-        }
+  const switchRow = (
+    label: string,
+    key: keyof SiteCreate,
+    disabled = false
+  ) => (
+    <div className="flex items-center justify-between">
+      <Label className="text-zinc-300 text-sm">{label}</Label>
+      <Switch
+        checked={!!formData[key]}
+        onCheckedChange={(v) => set(key, v as never)}
+        disabled={loading || disabled}
+      />
+    </div>
+  );
 
-        setLoading(true);
-        setError(null);
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v && !loading) onClose();
+      }}
+    >
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto border-zinc-800 bg-zinc-900">
+        <DialogHeader>
+          <DialogTitle className="text-zinc-100">
+            Edit Site: {site?.name}
+          </DialogTitle>
+        </DialogHeader>
 
-        try {
-            await updateSite(site.id, formData);
-            onSuccess();
-            onClose();
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Update failed');
-        } finally {
-            setLoading(false);
-        }
-    };
+        <div className="space-y-5 py-2">
+          {error && (
+            <Alert
+              variant="destructive"
+              className="border-red-900/50 bg-red-950/30"
+            >
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
 
-    const handleClose = () => {
-        if (!loading) {
-            onClose();
-        }
-    };
-    const upstreamIsHttps = formData.upstream_url.trim().toLowerCase().startsWith('https://');
+          {/* Basic Info */}
+          <div className="grid grid-cols-1 gap-4">
+            <div className="space-y-2">
+              <Label className="text-zinc-300">Site Name *</Label>
+              <Input
+                value={formData.name}
+                onChange={(e) => set("name", e.target.value)}
+                disabled={loading}
+                className="border-zinc-800 bg-zinc-950/70 text-zinc-100"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-zinc-300">Host *</Label>
+              <Input
+                value={formData.host}
+                onChange={(e) => set("host", e.target.value)}
+                disabled={loading}
+                placeholder="app.example.com"
+                className="border-zinc-800 bg-zinc-950/70 text-zinc-100 placeholder:text-zinc-500"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-zinc-300">Upstream URL *</Label>
+              <Input
+                value={formData.upstream_url}
+                onChange={(e) => set("upstream_url", e.target.value)}
+                disabled={loading}
+                placeholder="http://app-internal:8080"
+                className="border-zinc-800 bg-zinc-950/70 text-zinc-100 placeholder:text-zinc-500"
+              />
+            </div>
+          </div>
 
-    return (
-        <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
-            <DialogTitle>
-                Edit Site: {site?.name}
-            </DialogTitle>
-            <DialogContent>
-                {error && (
-                    <Alert severity="error" sx={{ mb: 2 }}>
-                        {error}
-                    </Alert>
-                )}
+          <Separator className="bg-zinc-800/50" />
 
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
-                    <TextField
-                        label="Site Name"
-                        value={formData.name}
-                        onChange={handleInputChange('name')}
-                        fullWidth
-                        required
-                        disabled={loading}
-                    />
+          {/* Selects */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-zinc-300">Body Inspection</Label>
+              <Select
+                value={formData.body_inspection_profile}
+                onValueChange={(v) => set("body_inspection_profile", v)}
+                disabled={loading}
+              >
+                <SelectTrigger className="border-zinc-800 bg-zinc-950/70 text-zinc-200">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="border-zinc-800 bg-zinc-900">
+                  <SelectItem value="strict">strict</SelectItem>
+                  <SelectItem value="default">default</SelectItem>
+                  <SelectItem value="headers_only">headers_only</SelectItem>
+                  <SelectItem value="upload_friendly">
+                    upload_friendly
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-zinc-300">WAF Decision Mode</Label>
+              <Select
+                value={formData.waf_decision_mode}
+                onValueChange={(v) =>
+                  set("waf_decision_mode", v as "fail_open" | "fail_close")
+                }
+                disabled={loading}
+              >
+                <SelectTrigger className="border-zinc-800 bg-zinc-950/70 text-zinc-200">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="border-zinc-800 bg-zinc-900">
+                  <SelectItem value="fail_close">fail_close</SelectItem>
+                  <SelectItem value="fail_open">fail_open</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-zinc-300">Proxy Redirect Mode</Label>
+              <Select
+                value={formData.proxy_redirect_mode}
+                onValueChange={(v) =>
+                  set(
+                    "proxy_redirect_mode",
+                    v as "default" | "off" | "rewrite_to_public_host"
+                  )
+                }
+                disabled={loading}
+              >
+                <SelectTrigger className="border-zinc-800 bg-zinc-950/70 text-zinc-200">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="border-zinc-800 bg-zinc-900">
+                  <SelectItem value="default">default</SelectItem>
+                  <SelectItem value="off">off</SelectItem>
+                  <SelectItem value="rewrite_to_public_host">
+                    rewrite_to_public_host
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-zinc-300">Request Buffering</Label>
+              <Select
+                value={
+                  formData.proxy_request_buffering === null
+                    ? "default"
+                    : formData.proxy_request_buffering
+                      ? "on"
+                      : "off"
+                }
+                onValueChange={(v) =>
+                  set(
+                    "proxy_request_buffering",
+                    v === "default" ? null : v === "on"
+                  )
+                }
+                disabled={loading}
+              >
+                <SelectTrigger className="border-zinc-800 bg-zinc-950/70 text-zinc-200">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="border-zinc-800 bg-zinc-900">
+                  <SelectItem value="default">Profile Default</SelectItem>
+                  <SelectItem value="on">on</SelectItem>
+                  <SelectItem value="off">off</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
 
-                    <TextField
-                        label="Host"
-                        value={formData.host}
-                        onChange={handleInputChange('host')}
-                        fullWidth
-                        required
-                        disabled={loading}
-                        placeholder="e.g., app.example.com"
-                    />
+          <Separator className="bg-zinc-800/50" />
 
-                    <TextField
-                        label="Upstream URL"
-                        value={formData.upstream_url}
-                        onChange={handleInputChange('upstream_url')}
-                        fullWidth
-                        required
-                        disabled={loading}
-                        placeholder="e.g., http://app-internal:8080"
-                    />
-
-                    <TextField
-                        select
-                        label="Body Inspection Profile"
-                        value={formData.body_inspection_profile}
-                        onChange={handleInputChange('body_inspection_profile')}
-                        fullWidth
-                        required
-                        disabled={loading}
-                    >
-                        <MenuItem value="strict">strict</MenuItem>
-                        <MenuItem value="default">default</MenuItem>
-                        <MenuItem value="headers_only">headers_only</MenuItem>
-                        <MenuItem value="upload_friendly">upload_friendly</MenuItem>
-                    </TextField>
-
-                    <TextField
-                        select
-                        fullWidth
-                        label="TLS Certificate"
-                        value={formData.tls_certificate_id ?? ''}
-                        onChange={handleInputChange('tls_certificate_id')}
-                        disabled={loading || !formData.tls_enabled || role !== 'super_admin'}
-                        helperText={!formData.tls_enabled ? 'Enable TLS to select a certificate.' : 'Leave empty to use default certificate.'}
-                    >
-                        <MenuItem value="">
-                            Use Default Certificate
-                        </MenuItem>
-                        {certificates.map((certificate) => (
-                            <MenuItem key={certificate.id} value={certificate.id}>
-                                {certificate.name}{certificate.is_default ? ' (default)' : ''}
-                            </MenuItem>
-                        ))}
-                    </TextField>
-
-                    <TextField
-                        label="Upstream TLS SNI Override (Optional)"
-                        value={formData.upstream_tls_server_name_override ?? ''}
-                        onChange={handleInputChange('upstream_tls_server_name_override')}
-                        fullWidth
-                        disabled={loading || !upstreamIsHttps}
-                        placeholder="e.g., upstream.example.com"
-                    />
-
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.is_active}
-                                    onChange={handleInputChange('is_active')}
-                                    disabled={loading}
-                                />
-                            }
-                            label="Active"
-                        />
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.preserve_host_header}
-                                    onChange={handleInputChange('preserve_host_header')}
-                                    disabled={loading}
-                                />
-                            }
-                            label="Preserve Host Header"
-                        />
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.enable_sni}
-                                    onChange={handleInputChange('enable_sni')}
-                                    disabled={loading}
-                                />
-                            }
-                            label="Enable SNI"
-                        />
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.websocket_enabled}
-                                    onChange={handleInputChange('websocket_enabled')}
-                                    disabled={loading}
-                                />
-                            }
-                            label="WebSocket Enabled"
-                        />
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.sse_enabled}
-                                    onChange={handleInputChange('sse_enabled')}
-                                    disabled={loading}
-                                />
-                            }
-                            label="SSE Enabled"
-                        />
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.tls_enabled}
-                                    onChange={handleInputChange('tls_enabled')}
-                                    disabled={loading}
-                                />
-                            }
-                            label="TLS Enabled"
-                        />
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.http_redirect_to_https}
-                                    onChange={handleInputChange('http_redirect_to_https')}
-                                    disabled={loading || !formData.tls_enabled}
-                                />
-                            }
-                            label="HTTP -> HTTPS Redirect"
-                        />
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.upstream_tls_verify}
-                                    onChange={handleInputChange('upstream_tls_verify')}
-                                    disabled={loading || !upstreamIsHttps}
-                                />
-                            }
-                            label="Upstream TLS Verify"
-                        />
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.hsts_enabled}
-                                    onChange={handleInputChange('hsts_enabled')}
-                                    disabled={loading || !formData.tls_enabled}
-                                />
-                            }
-                            label="HSTS Enabled"
-                        />
-                    </Box>
-
-                    <TextField
-                        type="number"
-                        fullWidth
-                        label="Client Max Body Size (MB, empty=profile default)"
-                        value={formData.client_max_body_size_mb ?? ''}
-                        onChange={handleInputChange('client_max_body_size_mb')}
-                        disabled={loading}
-                        inputProps={{ min: 1, max: 1024 }}
-                    />
-
-                    <TextField
-                        select
-                        fullWidth
-                        label="Proxy Request Buffering"
-                        value={formData.proxy_request_buffering === null ? '' : String(formData.proxy_request_buffering)}
-                        onChange={handleInputChange('proxy_request_buffering')}
-                        disabled={loading}
-                    >
-                        <MenuItem value="">Profile Default</MenuItem>
-                        <MenuItem value="true">on</MenuItem>
-                        <MenuItem value="false">off</MenuItem>
-                    </TextField>
-
-                    <Box sx={{ display: 'flex', gap: 2 }}>
-                        <TextField
-                            type="number"
-                            fullWidth
-                            label="Proxy Read Timeout (sec)"
-                            value={formData.proxy_read_timeout_sec}
-                            onChange={handleInputChange('proxy_read_timeout_sec')}
-                            disabled={loading}
-                            inputProps={{ min: 1, max: 3600 }}
-                        />
-                        <TextField
-                            type="number"
-                            fullWidth
-                            label="Proxy Send Timeout (sec)"
-                            value={formData.proxy_send_timeout_sec}
-                            onChange={handleInputChange('proxy_send_timeout_sec')}
-                            disabled={loading}
-                            inputProps={{ min: 1, max: 3600 }}
-                        />
-                        <TextField
-                            type="number"
-                            fullWidth
-                            label="Proxy Connect Timeout (sec)"
-                            value={formData.proxy_connect_timeout_sec}
-                            onChange={handleInputChange('proxy_connect_timeout_sec')}
-                            disabled={loading}
-                            inputProps={{ min: 1, max: 3600 }}
-                        />
-                    </Box>
-
-                    <TextField
-                        select
-                        fullWidth
-                        label="Proxy Redirect Mode"
-                        value={formData.proxy_redirect_mode}
-                        onChange={handleInputChange('proxy_redirect_mode')}
-                        disabled={loading}
-                    >
-                        <MenuItem value="default">default</MenuItem>
-                        <MenuItem value="off">off</MenuItem>
-                        <MenuItem value="rewrite_to_public_host">rewrite_to_public_host</MenuItem>
-                    </TextField>
-
-                    <TextField
-                        select
-                        fullWidth
-                        label="WAF Decision Mode"
-                        value={formData.waf_decision_mode}
-                        onChange={handleInputChange('waf_decision_mode')}
-                        disabled={loading}
-                    >
-                        <MenuItem value="fail_close">fail_close</MenuItem>
-                        <MenuItem value="fail_open">fail_open</MenuItem>
-                    </TextField>
-
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.cookie_rewrite_enabled}
-                                    onChange={handleInputChange('cookie_rewrite_enabled')}
-                                    disabled={loading}
-                                />
-                            }
-                            label="Cookie Rewrite Enabled"
-                        />
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.xss_enabled}
-                                    onChange={handleInputChange('xss_enabled')}
-                                    disabled={loading}
-                                />
-                            }
-                            label="XSS Protection"
-                        />
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.sql_enabled}
-                                    onChange={handleInputChange('sql_enabled')}
-                                    disabled={loading}
-                                />
-                            }
-                            label="SQL Injection Protection"
-                        />
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.vt_enabled}
-                                    onChange={handleInputChange('vt_enabled')}
-                                    disabled={loading}
-                                />
-                            }
-                            label="VirusTotal IP Check"
-                        />
-                    </Box>
-                </Box>
-            </DialogContent>
-            <DialogActions>
-                <Button onClick={handleClose} disabled={loading}>
-                    Cancel
-                </Button>
-                <Button
-                    onClick={handleSubmit}
-                    variant="contained"
-                    disabled={loading}
-                    startIcon={loading ? <CircularProgress size={16} /> : undefined}
+          {/* TLS Section */}
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-300 mb-3">
+              TLS / HTTPS
+            </h3>
+            <div className="grid grid-cols-1 gap-4">
+              <div className="space-y-2">
+                <Label className="text-zinc-300">TLS Certificate</Label>
+                <Select
+                  value={
+                    formData.tls_certificate_id
+                      ? String(formData.tls_certificate_id)
+                      : "default"
+                  }
+                  onValueChange={(v) =>
+                    set(
+                      "tls_certificate_id",
+                      v === "default" ? null : Number(v)
+                    )
+                  }
+                  disabled={
+                    loading ||
+                    !formData.tls_enabled ||
+                    role !== "super_admin"
+                  }
                 >
-                    {loading ? 'Updating...' : 'Update'}
-                </Button>
-            </DialogActions>
-        </Dialog>
-    );
+                  <SelectTrigger className="border-zinc-800 bg-zinc-950/70 text-zinc-200">
+                    <SelectValue placeholder="Use Default Certificate" />
+                  </SelectTrigger>
+                  <SelectContent className="border-zinc-800 bg-zinc-900">
+                    <SelectItem value="default">
+                      Use Default Certificate
+                    </SelectItem>
+                    {certificates.map((cert) => (
+                      <SelectItem key={cert.id} value={String(cert.id)}>
+                        {cert.name}
+                        {cert.is_default ? " (default)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-zinc-300">
+                  Upstream TLS SNI Override
+                </Label>
+                <Input
+                  value={formData.upstream_tls_server_name_override ?? ""}
+                  onChange={(e) =>
+                    set(
+                      "upstream_tls_server_name_override",
+                      e.target.value || null
+                    )
+                  }
+                  disabled={loading || !upstreamIsHttps}
+                  placeholder="upstream.example.com"
+                  className="border-zinc-800 bg-zinc-950/70 text-zinc-100 placeholder:text-zinc-500"
+                />
+              </div>
+            </div>
+          </div>
+
+          <Separator className="bg-zinc-800/50" />
+
+          {/* Switches */}
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-300 mb-3">
+              Features & Protection
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {switchRow("Active", "is_active")}
+              {switchRow("Preserve Host Header", "preserve_host_header")}
+              {switchRow("Enable SNI", "enable_sni")}
+              {switchRow("WebSocket", "websocket_enabled")}
+              {switchRow("SSE", "sse_enabled")}
+              {switchRow("TLS Enabled", "tls_enabled")}
+              {switchRow(
+                "HTTP → HTTPS Redirect",
+                "http_redirect_to_https",
+                !formData.tls_enabled
+              )}
+              {switchRow(
+                "Upstream TLS Verify",
+                "upstream_tls_verify",
+                !upstreamIsHttps
+              )}
+              {switchRow("HSTS", "hsts_enabled", !formData.tls_enabled)}
+              {switchRow("Cookie Rewrite", "cookie_rewrite_enabled")}
+              {switchRow("XSS Protection", "xss_enabled")}
+              {switchRow("SQL Injection Protection", "sql_enabled")}
+              {switchRow("VirusTotal Scan", "vt_enabled")}
+            </div>
+          </div>
+
+          <Separator className="bg-zinc-800/50" />
+
+          {/* Timeouts */}
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-300 mb-3">
+              Proxy Timeouts
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-zinc-400 text-xs">
+                  Max Body Size (MB)
+                </Label>
+                <Input
+                  type="number"
+                  value={formData.client_max_body_size_mb ?? ""}
+                  onChange={(e) =>
+                    set(
+                      "client_max_body_size_mb",
+                      e.target.value ? Number(e.target.value) : null
+                    )
+                  }
+                  min={1}
+                  max={1024}
+                  disabled={loading}
+                  placeholder="Default"
+                  className="border-zinc-800 bg-zinc-950/70 text-zinc-100 placeholder:text-zinc-500"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-zinc-400 text-xs">Read (sec)</Label>
+                <Input
+                  type="number"
+                  value={formData.proxy_read_timeout_sec}
+                  onChange={(e) =>
+                    set("proxy_read_timeout_sec", Number(e.target.value))
+                  }
+                  min={1}
+                  max={3600}
+                  disabled={loading}
+                  className="border-zinc-800 bg-zinc-950/70 text-zinc-100"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-zinc-400 text-xs">Send (sec)</Label>
+                <Input
+                  type="number"
+                  value={formData.proxy_send_timeout_sec}
+                  onChange={(e) =>
+                    set("proxy_send_timeout_sec", Number(e.target.value))
+                  }
+                  min={1}
+                  max={3600}
+                  disabled={loading}
+                  className="border-zinc-800 bg-zinc-950/70 text-zinc-100"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-zinc-400 text-xs">Connect (sec)</Label>
+                <Input
+                  type="number"
+                  value={formData.proxy_connect_timeout_sec}
+                  onChange={(e) =>
+                    set("proxy_connect_timeout_sec", Number(e.target.value))
+                  }
+                  min={1}
+                  max={3600}
+                  disabled={loading}
+                  className="border-zinc-800 bg-zinc-950/70 text-zinc-100"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button
+            variant="ghost"
+            onClick={onClose}
+            disabled={loading}
+            className="text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={loading}
+            className="bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4 mr-2" />
+            )}
+            {loading ? "Updating..." : "Update"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 };
 
 export default EditSiteModal;

@@ -1,26 +1,41 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Separator } from "@/components/ui/separator";
 import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  CircularProgress,
-  Divider,
-  FormControlLabel,
-  MenuItem,
-  Paper,
-  Stack,
-  Switch,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
-  TableContainer,
   TableHead,
+  TableHeader,
   TableRow,
-  TextField,
-  Typography,
-} from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+} from "@/components/ui/table";
+import {
+  AlertTriangle,
+  Info,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Rocket,
+  Shield,
+  Trash2,
+  UserPlus,
+  Users,
+} from "lucide-react";
+import { toast } from "sonner";
 import {
   applyOutboundProxyConfig,
   createOutboundProfile,
@@ -36,8 +51,8 @@ import {
   updateOutboundProfile,
   updateOutboundProxyUser,
   updateOutboundRule,
-} from '../api/forwardProxy';
-import { useAuth } from '../context/AuthContext';
+} from "@/api/forwardProxy";
+import { useAuth } from "@/context/AuthContext";
 import type {
   ForwardProxyStatus,
   OutboundDestinationRule,
@@ -46,55 +61,60 @@ import type {
   OutboundProxyProfileCreate,
   OutboundProxyUser,
   OutboundProxyUserCreate,
-} from '../types/OutboundProxy';
+} from "@/types/OutboundProxy";
 
 const DEFAULT_PROFILE_FORM: OutboundProxyProfileCreate = {
-  name: '',
+  name: "",
   listen_port: 3128,
   is_enabled: false,
   require_auth: false,
-  auth_realm: 'WAF Forward Proxy',
-  allow_connect_ports: '443,563',
+  auth_realm: "WAF Forward Proxy",
+  allow_connect_ports: "443,563",
   allowed_client_cidrs: null,
-  default_action: 'deny',
+  default_action: "deny",
   block_private_destinations: true,
 };
 
 const DEFAULT_RULE_FORM: OutboundDestinationRuleCreate = {
-  action: 'allow',
-  rule_type: 'domain_suffix',
-  value: '',
+  action: "allow",
+  rule_type: "domain_suffix",
+  value: "",
   priority: 100,
   is_enabled: true,
 };
 
 const OutboundProxyManagement = () => {
   const { role } = useAuth();
-  const navigate = useNavigate();
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [profiles, setProfiles] = useState<OutboundProxyProfile[]>([]);
-  const [selectedProfileId, setSelectedProfileId] = useState<number | null>(null);
+  const [selectedProfileId, setSelectedProfileId] = useState<number | null>(
+    null
+  );
   const [rules, setRules] = useState<OutboundDestinationRule[]>([]);
   const [status, setStatus] = useState<ForwardProxyStatus | null>(null);
 
   const [editingProfileId, setEditingProfileId] = useState<number | null>(null);
-  const [profileForm, setProfileForm] = useState<OutboundProxyProfileCreate>(DEFAULT_PROFILE_FORM);
+  const [profileForm, setProfileForm] =
+    useState<OutboundProxyProfileCreate>(DEFAULT_PROFILE_FORM);
 
   const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
-  const [ruleForm, setRuleForm] = useState<OutboundDestinationRuleCreate>(DEFAULT_RULE_FORM);
+  const [ruleForm, setRuleForm] =
+    useState<OutboundDestinationRuleCreate>(DEFAULT_RULE_FORM);
 
-  // Phase 9A.2-B: Auth user management
   const [proxyUsers, setProxyUsers] = useState<OutboundProxyUser[]>([]);
-  const [userForm, setUserForm] = useState<OutboundProxyUserCreate>({ username: '', password: '' });
+  const [userForm, setUserForm] = useState<OutboundProxyUserCreate>({
+    username: "",
+    password: "",
+  });
   const [addingUser, setAddingUser] = useState(false);
 
   const selectedProfile = useMemo(
-    () => profiles.find((profile) => profile.id === selectedProfileId) ?? null,
-    [profiles, selectedProfileId],
+    () => profiles.find((p) => p.id === selectedProfileId) ?? null,
+    [profiles, selectedProfileId]
   );
 
   const loadProfiles = async () => {
@@ -105,9 +125,7 @@ const OutboundProxyManagement = () => {
       return;
     }
     setSelectedProfileId((prev) => {
-      if (prev && data.some((profile) => profile.id === prev)) {
-        return prev;
-      }
+      if (prev && data.some((p) => p.id === prev)) return prev;
       return data[0].id;
     });
   };
@@ -127,7 +145,6 @@ const OutboundProxyManagement = () => {
       const data = await fetchOutboundProxyUsers();
       setProxyUsers(data);
     } catch {
-      // Non-critical; users tab may just be empty
       setProxyUsers([]);
     }
   };
@@ -140,7 +157,11 @@ const OutboundProxyManagement = () => {
       await loadStatus();
       await loadProxyUsers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load outbound proxy state.');
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load outbound proxy state."
+      );
     } finally {
       setLoading(false);
     }
@@ -159,7 +180,9 @@ const OutboundProxyManagement = () => {
       try {
         await loadRules(selectedProfileId);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load rules.');
+        setError(
+          err instanceof Error ? err.message : "Failed to load rules."
+        );
       }
     };
     void run();
@@ -168,30 +191,32 @@ const OutboundProxyManagement = () => {
   const handleProfileSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!profileForm.name.trim()) {
-      setError('Profile name is required.');
+      setError("Profile name is required.");
       return;
     }
-
     setSaving(true);
     setError(null);
     try {
       const payload: OutboundProxyProfileCreate = {
         ...profileForm,
         name: profileForm.name.trim(),
-        allowed_client_cidrs: profileForm.allowed_client_cidrs?.trim() || null,
+        allowed_client_cidrs:
+          profileForm.allowed_client_cidrs?.trim() || null,
       };
-
       if (editingProfileId) {
         await updateOutboundProfile(editingProfileId, payload);
+        toast.success("Profile updated.");
       } else {
         await createOutboundProfile(payload);
+        toast.success("Profile created.");
       }
-
       setEditingProfileId(null);
       setProfileForm(DEFAULT_PROFILE_FORM);
       await refreshAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save profile.');
+      setError(
+        err instanceof Error ? err.message : "Failed to save profile."
+      );
     } finally {
       setSaving(false);
     }
@@ -204,7 +229,7 @@ const OutboundProxyManagement = () => {
       listen_port: profile.listen_port,
       is_enabled: profile.is_enabled,
       require_auth: profile.require_auth,
-      auth_realm: profile.auth_realm ?? 'WAF Forward Proxy',
+      auth_realm: profile.auth_realm ?? "WAF Forward Proxy",
       allow_connect_ports: profile.allow_connect_ports,
       allowed_client_cidrs: profile.allowed_client_cidrs,
       default_action: profile.default_action,
@@ -217,12 +242,13 @@ const OutboundProxyManagement = () => {
     setError(null);
     try {
       await deleteOutboundProfile(profileId);
-      if (selectedProfileId === profileId) {
-        setSelectedProfileId(null);
-      }
+      if (selectedProfileId === profileId) setSelectedProfileId(null);
+      toast.success("Profile deleted.");
       await refreshAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete profile.');
+      setError(
+        err instanceof Error ? err.message : "Failed to delete profile."
+      );
     } finally {
       setSaving(false);
     }
@@ -231,14 +257,13 @@ const OutboundProxyManagement = () => {
   const handleRuleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!selectedProfileId) {
-      setError('Select a profile before adding rules.');
+      setError("Select a profile before adding rules.");
       return;
     }
     if (!ruleForm.value.trim()) {
-      setError('Rule value is required.');
+      setError("Rule value is required.");
       return;
     }
-
     setSaving(true);
     setError(null);
     try {
@@ -248,15 +273,17 @@ const OutboundProxyManagement = () => {
       };
       if (editingRuleId) {
         await updateOutboundRule(editingRuleId, payload);
+        toast.success("Rule updated.");
       } else {
         await createOutboundRule(selectedProfileId, payload);
+        toast.success("Rule added.");
       }
       setEditingRuleId(null);
       setRuleForm(DEFAULT_RULE_FORM);
       await loadRules(selectedProfileId);
       await loadStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save rule.');
+      setError(err instanceof Error ? err.message : "Failed to save rule.");
     } finally {
       setSaving(false);
     }
@@ -275,15 +302,15 @@ const OutboundProxyManagement = () => {
 
   const handleRuleDelete = async (ruleId: number) => {
     if (!selectedProfileId) return;
-
     setSaving(true);
     setError(null);
     try {
       await deleteOutboundRule(ruleId);
+      toast.success("Rule deleted.");
       await loadRules(selectedProfileId);
       await loadStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete rule.');
+      setError(err instanceof Error ? err.message : "Failed to delete rule.");
     } finally {
       setSaving(false);
     }
@@ -294,31 +321,37 @@ const OutboundProxyManagement = () => {
     setError(null);
     try {
       await applyOutboundProxyConfig();
+      toast.success("Config applied.");
       await loadStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to apply forward proxy config.');
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to apply forward proxy config."
+      );
     } finally {
       setSaving(false);
     }
   };
 
-  // ── Phase 9A.2-B: Proxy user handlers ──
-
   const handleAddProxyUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userForm.username.trim() || !userForm.password) {
-      setError('Username and password are required.');
+      setError("Username and password are required.");
       return;
     }
     setAddingUser(true);
     setError(null);
     try {
       await createOutboundProxyUser(userForm);
-      setUserForm({ username: '', password: '' });
+      setUserForm({ username: "", password: "" });
+      toast.success("Proxy user created.");
       await loadProxyUsers();
       await loadStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create proxy user.');
+      setError(
+        err instanceof Error ? err.message : "Failed to create proxy user."
+      );
     } finally {
       setAddingUser(false);
     }
@@ -329,10 +362,13 @@ const OutboundProxyManagement = () => {
     setError(null);
     try {
       await updateOutboundProxyUser(userId, { is_active: !isActive });
+      toast.success(isActive ? "User deactivated." : "User activated.");
       await loadProxyUsers();
       await loadStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update proxy user.');
+      setError(
+        err instanceof Error ? err.message : "Failed to update proxy user."
+      );
     } finally {
       setSaving(false);
     }
@@ -343,435 +379,779 @@ const OutboundProxyManagement = () => {
     setError(null);
     try {
       await deleteOutboundProxyUser(userId);
+      toast.success("Proxy user deleted.");
       await loadProxyUsers();
       await loadStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete proxy user.');
+      setError(
+        err instanceof Error ? err.message : "Failed to delete proxy user."
+      );
     } finally {
       setSaving(false);
     }
   };
 
-  if (role !== 'super_admin') {
+  const switchRow = (
+    label: string,
+    checked: boolean,
+    onChange: (v: boolean) => void,
+    disabled = false
+  ) => (
+    <div className="flex items-center justify-between">
+      <Label className="text-zinc-300 text-sm">{label}</Label>
+      <Switch
+        checked={checked}
+        onCheckedChange={onChange}
+        disabled={disabled}
+      />
+    </div>
+  );
+
+  if (role !== "super_admin") {
     return (
-      <Box sx={{ p: 3 }}>
-        <Alert severity="warning">
-          Outbound Proxy management is restricted to `super_admin` role.
+      <div className="p-6">
+        <Alert className="border-amber-500/30 bg-amber-500/5">
+          <AlertTriangle className="h-4 w-4 text-amber-400" />
+          <AlertDescription className="text-amber-300">
+            Outbound Proxy management is restricted to super_admin role.
+          </AlertDescription>
         </Alert>
-      </Box>
+      </div>
     );
   }
 
   return (
-    <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <Typography variant="h4">Outbound Proxy</Typography>
+    <div className="space-y-6">
+      {/* Info Banner */}
+      <div className="flex items-start gap-2 rounded-lg border border-sky-500/20 bg-sky-500/5 p-3">
+        <Info className="h-4 w-4 text-sky-400 mt-0.5 shrink-0" />
+        <p className="text-xs text-sky-300">
+          Browser/system proxy ayarı için VM_IP:3128 kullanın. HTTPS trafiği
+          CONNECT tüneli ile geçer; Phase 9A kapsamında TLS payload inspection
+          yoktur.
+        </p>
+      </div>
 
-      <Alert severity="info">
-        Browser/system proxy ayarı için `VM_IP:3128` kullanın. HTTPS trafiği CONNECT tüneli ile geçer; Phase 9A kapsamında TLS payload inspection yoktur.
-      </Alert>
+      {error && (
+        <Alert
+          variant="destructive"
+          className="border-red-900/50 bg-red-950/30"
+        >
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
-      {error && <Alert severity="error">{error}</Alert>}
+      {/* Status */}
+      <Card className="border-zinc-800/70 bg-zinc-900/50">
+        <CardContent className="pt-6">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
+                <Rocket className="h-4 w-4 text-emerald-400" />
+                Forward Proxy Runtime
+              </h3>
+              <div className="grid grid-cols-2 gap-x-8 gap-y-0.5 text-xs">
+                <span className="text-zinc-400">Active profile:</span>
+                <span className="text-zinc-200">
+                  {status?.active_profile_name ?? "none"}
+                </span>
+                <span className="text-zinc-400">Rule count:</span>
+                <span className="text-zinc-200">
+                  {status?.active_rule_count ?? 0}
+                </span>
+                <span className="text-zinc-400">Auth:</span>
+                <span>
+                  {status?.require_auth ? (
+                    <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/30 hover:bg-sky-500/15">
+                      Basic Auth ({status?.active_auth_user_count ?? 0} users)
+                    </Badge>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="text-zinc-500 border-zinc-700"
+                    >
+                      Disabled
+                    </Badge>
+                  )}
+                </span>
+                <span className="text-zinc-400">Config path:</span>
+                <span className="text-zinc-200 font-mono text-[11px]">
+                  {status?.config_path ?? "-"}
+                </span>
+                <span className="text-zinc-400">Validate:</span>
+                <span
+                  className={
+                    status?.validation?.ok
+                      ? "text-emerald-400"
+                      : "text-red-400"
+                  }
+                >
+                  {status?.validation?.ok ? "ok" : "failed"}
+                </span>
+              </div>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void refreshAll()}
+                disabled={loading || saving}
+                className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                Refresh
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void handleApply()}
+                disabled={loading || saving}
+                className="bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+              >
+                {saving ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                ) : (
+                  <Rocket className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                Apply Config
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
-      <Paper sx={{ p: 2 }}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center" justifyContent="space-between">
-          <Box>
-            <Typography variant="h6">Forward Proxy Runtime</Typography>
-            <Typography variant="body2">Active profile: {status?.active_profile_name ?? 'none'}</Typography>
-            <Typography variant="body2">Rule count: {status?.active_rule_count ?? 0}</Typography>
-            <Typography variant="body2">
-              Auth: {status?.require_auth ? (
-                <Chip label={`Basic Auth (${status?.active_auth_user_count ?? 0} users)`} size="small" color="primary" variant="outlined" />
-              ) : (
-                <Chip label="Disabled" size="small" variant="outlined" />
-              )}
-            </Typography>
-            <Typography variant="body2">Config path: {status?.config_path ?? '-'}</Typography>
-            <Typography variant="body2">Validate: {status?.validation?.ok ? 'ok' : 'failed'}</Typography>
-          </Box>
-          <Stack direction="row" spacing={1}>
-            <Button variant="outlined" onClick={() => void refreshAll()} disabled={loading || saving}>
-              Refresh
-            </Button>
-            <Button variant="contained" onClick={() => void handleApply()} disabled={loading || saving}>
-              {saving ? <CircularProgress size={18} /> : 'Apply Config'}
-            </Button>
-            <Button variant="text" onClick={() => navigate('/sites')}>
-              Back to Sites
-            </Button>
-          </Stack>
-        </Stack>
-      </Paper>
+      {/* Profile Form */}
+      <Card className="border-zinc-800/70 bg-zinc-900/50">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg text-zinc-100">
+            <Shield className="h-5 w-5 text-emerald-400" />
+            {editingProfileId
+              ? `Edit Profile #${editingProfileId}`
+              : "Create Profile"}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleProfileSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-zinc-300">Profile Name *</Label>
+              <Input
+                value={profileForm.name}
+                onChange={(e) =>
+                  setProfileForm((p) => ({ ...p, name: e.target.value }))
+                }
+                className="border-zinc-800 bg-zinc-950/70 text-zinc-100 placeholder:text-zinc-500"
+                placeholder="default-outbound"
+              />
+            </div>
 
-      <Paper sx={{ p: 2 }}>
-        <Typography variant="h6" sx={{ mb: 2 }}>
-          {editingProfileId ? `Edit Profile #${editingProfileId}` : 'Create Profile'}
-        </Typography>
-
-        <Box component="form" onSubmit={handleProfileSubmit} sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <TextField
-            required
-            label="Profile Name"
-            value={profileForm.name}
-            onChange={(event) => setProfileForm((prev) => ({ ...prev, name: event.target.value }))}
-          />
-
-          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-            <TextField
-              required
-              type="number"
-              label="Listen Port"
-              value={profileForm.listen_port}
-              onChange={(event) => setProfileForm((prev) => ({ ...prev, listen_port: Number(event.target.value) }))}
-              inputProps={{ min: 1, max: 65535 }}
-            />
-            <TextField
-              required
-              label="CONNECT Ports (CSV)"
-              value={profileForm.allow_connect_ports}
-              onChange={(event) => setProfileForm((prev) => ({ ...prev, allow_connect_ports: event.target.value }))}
-              placeholder="443,563"
-            />
-            <TextField
-              select
-              label="Default Action"
-              value={profileForm.default_action}
-              onChange={(event) => setProfileForm((prev) => ({ ...prev, default_action: event.target.value as 'allow' | 'deny' }))}
-            >
-              <MenuItem value="deny">deny</MenuItem>
-              <MenuItem value="allow">allow</MenuItem>
-            </TextField>
-          </Box>
-
-          <TextField
-            label="Allowed Client CIDRs (CSV, optional)"
-            value={profileForm.allowed_client_cidrs ?? ''}
-            onChange={(event) => setProfileForm((prev) => ({ ...prev, allowed_client_cidrs: event.target.value || null }))}
-            placeholder="10.0.0.0/24,192.168.1.0/24"
-          />
-
-          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-            <FormControlLabel
-              control={(
-                <Switch
-                  checked={profileForm.is_enabled}
-                  onChange={(event) => setProfileForm((prev) => ({ ...prev, is_enabled: event.target.checked }))}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label className="text-zinc-300">Listen Port *</Label>
+                <Input
+                  type="number"
+                  value={profileForm.listen_port}
+                  onChange={(e) =>
+                    setProfileForm((p) => ({
+                      ...p,
+                      listen_port: Number(e.target.value),
+                    }))
+                  }
+                  min={1}
+                  max={65535}
+                  className="border-zinc-800 bg-zinc-950/70 text-zinc-100"
                 />
-              )}
-              label="Enabled"
-            />
-            <FormControlLabel
-              control={(
-                <Switch
-                  checked={profileForm.require_auth}
-                  onChange={(event) => setProfileForm((prev) => ({ ...prev, require_auth: event.target.checked }))}
+              </div>
+              <div className="space-y-2">
+                <Label className="text-zinc-300">CONNECT Ports (CSV)</Label>
+                <Input
+                  value={profileForm.allow_connect_ports}
+                  onChange={(e) =>
+                    setProfileForm((p) => ({
+                      ...p,
+                      allow_connect_ports: e.target.value,
+                    }))
+                  }
+                  placeholder="443,563"
+                  className="border-zinc-800 bg-zinc-950/70 text-zinc-100 placeholder:text-zinc-500"
                 />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-zinc-300">Default Action</Label>
+                <Select
+                  value={profileForm.default_action}
+                  onValueChange={(v) =>
+                    setProfileForm((p) => ({
+                      ...p,
+                      default_action: v as "allow" | "deny",
+                    }))
+                  }
+                >
+                  <SelectTrigger className="border-zinc-800 bg-zinc-950/70 text-zinc-200">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="border-zinc-800 bg-zinc-900">
+                    <SelectItem value="deny">deny</SelectItem>
+                    <SelectItem value="allow">allow</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-zinc-300">
+                Allowed Client CIDRs (CSV, optional)
+              </Label>
+              <Input
+                value={profileForm.allowed_client_cidrs ?? ""}
+                onChange={(e) =>
+                  setProfileForm((p) => ({
+                    ...p,
+                    allowed_client_cidrs: e.target.value || null,
+                  }))
+                }
+                placeholder="10.0.0.0/24,192.168.1.0/24"
+                className="border-zinc-800 bg-zinc-950/70 text-zinc-100 placeholder:text-zinc-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {switchRow("Enabled", profileForm.is_enabled, (v) =>
+                setProfileForm((p) => ({ ...p, is_enabled: v }))
               )}
-              label="Require Basic Auth"
-            />
-            <FormControlLabel
-              control={(
-                <Switch
-                  checked={profileForm.block_private_destinations ?? true}
-                  onChange={(event) => setProfileForm((prev) => ({ ...prev, block_private_destinations: event.target.checked }))}
+              {switchRow("Require Basic Auth", profileForm.require_auth, (v) =>
+                setProfileForm((p) => ({ ...p, require_auth: v }))
+              )}
+              {switchRow(
+                "Block Private Destinations",
+                profileForm.block_private_destinations ?? true,
+                (v) =>
+                  setProfileForm((p) => ({
+                    ...p,
+                    block_private_destinations: v,
+                  }))
+              )}
+            </div>
+
+            {profileForm.require_auth && (
+              <div className="space-y-2">
+                <Label className="text-zinc-300">Auth Realm</Label>
+                <Input
+                  value={profileForm.auth_realm}
+                  onChange={(e) =>
+                    setProfileForm((p) => ({
+                      ...p,
+                      auth_realm: e.target.value,
+                    }))
+                  }
+                  className="border-zinc-800 bg-zinc-950/70 text-zinc-100"
                 />
+                <p className="text-xs text-zinc-500">
+                  Displayed to proxy clients in the authentication prompt
+                </p>
+              </div>
+            )}
+
+            {profileForm.require_auth &&
+              proxyUsers.filter((u) => u.is_active).length === 0 && (
+                <Alert className="border-amber-500/30 bg-amber-500/5">
+                  <AlertTriangle className="h-4 w-4 text-amber-400" />
+                  <AlertDescription className="text-amber-300">
+                    No active proxy users. You must add at least one user before
+                    enabling auth.
+                  </AlertDescription>
+                </Alert>
               )}
-              label="Block Private Destinations"
-            />
-          </Box>
 
-          {profileForm.require_auth && (
-            <TextField
-              label="Auth Realm"
-              value={profileForm.auth_realm}
-              onChange={(event) => setProfileForm((prev) => ({ ...prev, auth_realm: event.target.value }))}
-              helperText="Displayed to proxy clients in the authentication prompt"
-            />
-          )}
+            <div className="flex gap-2">
+              <Button
+                type="submit"
+                disabled={saving || loading}
+                className="bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+              >
+                {saving && (
+                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                )}
+                {editingProfileId ? "Update Profile" : "Create Profile"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setEditingProfileId(null);
+                  setProfileForm(DEFAULT_PROFILE_FORM);
+                }}
+                disabled={saving || loading}
+                className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                Reset
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
 
-          {profileForm.require_auth && proxyUsers.filter((u) => u.is_active).length === 0 && (
-            <Alert severity="warning">
-              No active proxy users. You must add at least one user before enabling auth.
-            </Alert>
-          )}
-
-          <Stack direction="row" spacing={1}>
-            <Button type="submit" variant="contained" disabled={saving || loading}>
-              {editingProfileId ? 'Update Profile' : 'Create Profile'}
-            </Button>
-            <Button
-              type="button"
-              variant="outlined"
-              onClick={() => {
-                setEditingProfileId(null);
-                setProfileForm(DEFAULT_PROFILE_FORM);
-              }}
-              disabled={saving || loading}
-            >
-              Reset
-            </Button>
-          </Stack>
-        </Box>
-      </Paper>
-
-      <Paper sx={{ p: 2 }}>
-        <Typography variant="h6" sx={{ mb: 2 }}>Profiles</Typography>
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>ID</TableCell>
-                <TableCell>Name</TableCell>
-                <TableCell>Port</TableCell>
-                <TableCell>Enabled</TableCell>
-                <TableCell>Default</TableCell>
-                <TableCell>Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {profiles.map((profile) => (
-                <TableRow key={profile.id} selected={profile.id === selectedProfileId}>
-                  <TableCell>{profile.id}</TableCell>
-                  <TableCell>{profile.name}</TableCell>
-                  <TableCell>{profile.listen_port}</TableCell>
-                  <TableCell>{profile.is_enabled ? 'yes' : 'no'}</TableCell>
-                  <TableCell>{profile.default_action}</TableCell>
-                  <TableCell>
-                    <Stack direction="row" spacing={1}>
-                      <Button size="small" onClick={() => setSelectedProfileId(profile.id)}>
+      {/* Profiles Table */}
+      <Card className="border-zinc-800/70 bg-zinc-900/50">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-zinc-100 text-base">Profiles</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-md border border-zinc-800/70 overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="border-zinc-800/70 hover:bg-transparent">
+                  <TableHead className="text-zinc-400">ID</TableHead>
+                  <TableHead className="text-zinc-400">Name</TableHead>
+                  <TableHead className="text-zinc-400">Port</TableHead>
+                  <TableHead className="text-zinc-400">Enabled</TableHead>
+                  <TableHead className="text-zinc-400">Default</TableHead>
+                  <TableHead className="text-zinc-400 text-right">
+                    Actions
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {profiles.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell
+                      colSpan={6}
+                      className="text-center text-zinc-500 py-8"
+                    >
+                      No profiles yet.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {profiles.map((profile) => (
+                  <TableRow
+                    key={profile.id}
+                    className={`border-zinc-800/70 hover:bg-zinc-800/30 ${profile.id === selectedProfileId ? "bg-emerald-500/5" : ""}`}
+                  >
+                    <TableCell className="text-zinc-400 text-xs">
+                      {profile.id}
+                    </TableCell>
+                    <TableCell className="text-zinc-200 font-medium">
+                      {profile.name}
+                    </TableCell>
+                    <TableCell className="text-zinc-300 font-mono text-sm">
+                      {profile.listen_port}
+                    </TableCell>
+                    <TableCell>
+                      {profile.is_enabled ? (
+                        <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/15">
+                          yes
+                        </Badge>
+                      ) : (
+                        <span className="text-zinc-500 text-xs">no</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-zinc-300 text-sm">
+                      {profile.default_action}
+                    </TableCell>
+                    <TableCell className="text-right space-x-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={`text-xs ${profile.id === selectedProfileId ? "text-emerald-400" : "text-zinc-400 hover:text-zinc-200"} hover:bg-zinc-800`}
+                        onClick={() => setSelectedProfileId(profile.id)}
+                      >
                         Select
                       </Button>
-                      <Button size="small" onClick={() => handleProfileEdit(profile)}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+                        onClick={() => handleProfileEdit(profile)}
+                      >
+                        <Pencil className="h-3 w-3 mr-1" />
                         Edit
                       </Button>
-                      <Button size="small" color="error" onClick={() => void handleProfileDelete(profile.id)}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                        onClick={() => void handleProfileDelete(profile.id)}
+                      >
+                        <Trash2 className="h-3 w-3 mr-1" />
                         Delete
                       </Button>
-                    </Stack>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
 
-      <Divider />
+      <Separator className="bg-zinc-800/50" />
 
-      {/* ── Phase 9A.2-B: Proxy Auth User Management ── */}
-      <Paper sx={{ p: 2 }}>
-        <Typography variant="h6" sx={{ mb: 1 }}>Proxy Auth Users</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Credentials required for proxy clients when Basic Auth is enabled on a profile. Passwords are stored as bcrypt hashes — they cannot be retrieved after creation.
-        </Typography>
-
-        <Box component="form" onSubmit={handleAddProxyUser} sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2, alignItems: 'flex-start' }}>
-          <TextField
-            required
-            size="small"
-            label="Username"
-            value={userForm.username}
-            onChange={(e) => setUserForm((prev) => ({ ...prev, username: e.target.value }))}
-            placeholder="proxyuser1"
-            helperText="Letters, digits, . _ @ -"
-          />
-          <TextField
-            required
-            size="small"
-            type="password"
-            label="Password"
-            value={userForm.password}
-            onChange={(e) => setUserForm((prev) => ({ ...prev, password: e.target.value }))}
-            helperText="Min 12 characters"
-          />
-          <Button type="submit" variant="contained" size="small" disabled={addingUser || saving || loading}>
-            {addingUser ? <CircularProgress size={18} /> : 'Add User'}
-          </Button>
-        </Box>
-
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>ID</TableCell>
-                <TableCell>Username</TableCell>
-                <TableCell>Active</TableCell>
-                <TableCell>Created</TableCell>
-                <TableCell>Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {proxyUsers.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={5} align="center">
-                    <Typography variant="body2" color="text.secondary">No proxy users yet.</Typography>
-                  </TableCell>
-                </TableRow>
+      {/* Proxy Auth Users */}
+      <Card className="border-zinc-800/70 bg-zinc-900/50">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-zinc-100 text-base">
+            <Users className="h-4 w-4 text-sky-400" />
+            Proxy Auth Users
+          </CardTitle>
+          <p className="text-xs text-zinc-500">
+            Credentials required for proxy clients when Basic Auth is enabled.
+            Passwords stored as bcrypt hashes.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <form
+            onSubmit={handleAddProxyUser}
+            className="flex flex-wrap items-end gap-3"
+          >
+            <div className="space-y-1.5">
+              <Label className="text-zinc-400 text-xs">Username</Label>
+              <Input
+                value={userForm.username}
+                onChange={(e) =>
+                  setUserForm((p) => ({ ...p, username: e.target.value }))
+                }
+                placeholder="proxyuser1"
+                className="border-zinc-800 bg-zinc-950/70 text-zinc-100 placeholder:text-zinc-500 w-48"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-zinc-400 text-xs">Password</Label>
+              <Input
+                type="password"
+                value={userForm.password}
+                onChange={(e) =>
+                  setUserForm((p) => ({ ...p, password: e.target.value }))
+                }
+                placeholder="Min 12 characters"
+                className="border-zinc-800 bg-zinc-950/70 text-zinc-100 placeholder:text-zinc-500 w-48"
+              />
+            </div>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={addingUser || saving || loading}
+              className="bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+            >
+              {addingUser ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+              ) : (
+                <UserPlus className="h-3.5 w-3.5 mr-1.5" />
               )}
-              {proxyUsers.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell>{user.id}</TableCell>
-                  <TableCell>{user.username}</TableCell>
-                  <TableCell>
-                    <Chip
-                      label={user.is_active ? 'active' : 'inactive'}
-                      size="small"
-                      color={user.is_active ? 'success' : 'default'}
-                      variant="outlined"
-                    />
-                  </TableCell>
-                  <TableCell>{new Date(user.created_at).toLocaleDateString()}</TableCell>
-                  <TableCell>
-                    <Stack direction="row" spacing={1}>
+              Add User
+            </Button>
+          </form>
+
+          <div className="rounded-md border border-zinc-800/70 overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="border-zinc-800/70 hover:bg-transparent">
+                  <TableHead className="text-zinc-400">ID</TableHead>
+                  <TableHead className="text-zinc-400">Username</TableHead>
+                  <TableHead className="text-zinc-400">Active</TableHead>
+                  <TableHead className="text-zinc-400">Created</TableHead>
+                  <TableHead className="text-zinc-400 text-right">
+                    Actions
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {proxyUsers.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell
+                      colSpan={5}
+                      className="text-center text-zinc-500 py-6"
+                    >
+                      No proxy users yet.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {proxyUsers.map((user) => (
+                  <TableRow
+                    key={user.id}
+                    className="border-zinc-800/70 hover:bg-zinc-800/30"
+                  >
+                    <TableCell className="text-zinc-400 text-xs">
+                      {user.id}
+                    </TableCell>
+                    <TableCell className="text-zinc-200 font-mono text-sm">
+                      {user.username}
+                    </TableCell>
+                    <TableCell>
+                      {user.is_active ? (
+                        <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/15">
+                          active
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="text-zinc-500 border-zinc-700"
+                        >
+                          inactive
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-zinc-400 text-xs">
+                      {new Date(user.created_at).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="text-right space-x-1">
                       <Button
-                        size="small"
-                        onClick={() => void handleToggleProxyUser(user.id, user.is_active)}
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+                        onClick={() =>
+                          void handleToggleProxyUser(user.id, user.is_active)
+                        }
                         disabled={saving}
                       >
-                        {user.is_active ? 'Deactivate' : 'Activate'}
+                        {user.is_active ? "Deactivate" : "Activate"}
                       </Button>
                       <Button
-                        size="small"
-                        color="error"
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10"
                         onClick={() => void handleDeleteProxyUser(user.id)}
                         disabled={saving}
                       >
                         Delete
                       </Button>
-                    </Stack>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
 
-      <Divider />
+      <Separator className="bg-zinc-800/50" />
 
-      <Paper sx={{ p: 2 }}>
-        <Typography variant="h6" sx={{ mb: 2 }}>
-          Rules {selectedProfile ? `for ${selectedProfile.name}` : ''}
-        </Typography>
+      {/* Rules */}
+      <Card className="border-zinc-800/70 bg-zinc-900/50">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-zinc-100 text-base">
+            Rules{" "}
+            {selectedProfile && (
+              <span className="text-emerald-400 font-normal">
+                for {selectedProfile.name}
+              </span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!selectedProfile && (
+            <Alert className="border-amber-500/30 bg-amber-500/5">
+              <AlertTriangle className="h-4 w-4 text-amber-400" />
+              <AlertDescription className="text-amber-300">
+                Create/select a profile to manage destination rules.
+              </AlertDescription>
+            </Alert>
+          )}
 
-        {!selectedProfile && (
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            Create/select a profile to manage destination rules.
-          </Alert>
-        )}
+          <form onSubmit={handleRuleSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label className="text-zinc-300">Action</Label>
+                <Select
+                  value={ruleForm.action}
+                  onValueChange={(v) =>
+                    setRuleForm((p) => ({
+                      ...p,
+                      action: v as "allow" | "deny",
+                    }))
+                  }
+                  disabled={!selectedProfile}
+                >
+                  <SelectTrigger className="border-zinc-800 bg-zinc-950/70 text-zinc-200">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="border-zinc-800 bg-zinc-900">
+                    <SelectItem value="allow">allow</SelectItem>
+                    <SelectItem value="deny">deny</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-zinc-300">Rule Type</Label>
+                <Select
+                  value={ruleForm.rule_type}
+                  onValueChange={(v) =>
+                    setRuleForm((p) => ({
+                      ...p,
+                      rule_type:
+                        v as OutboundDestinationRuleCreate["rule_type"],
+                    }))
+                  }
+                  disabled={!selectedProfile}
+                >
+                  <SelectTrigger className="border-zinc-800 bg-zinc-950/70 text-zinc-200">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="border-zinc-800 bg-zinc-900">
+                    <SelectItem value="domain_suffix">domain_suffix</SelectItem>
+                    <SelectItem value="domain_exact">domain_exact</SelectItem>
+                    <SelectItem value="host_exact">host_exact</SelectItem>
+                    <SelectItem value="cidr">cidr</SelectItem>
+                    <SelectItem value="port">port</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-zinc-300">Priority</Label>
+                <Input
+                  type="number"
+                  value={ruleForm.priority}
+                  onChange={(e) =>
+                    setRuleForm((p) => ({
+                      ...p,
+                      priority: Number(e.target.value),
+                    }))
+                  }
+                  min={0}
+                  max={1000000}
+                  disabled={!selectedProfile}
+                  className="border-zinc-800 bg-zinc-950/70 text-zinc-100"
+                />
+              </div>
+            </div>
 
-        <Box component="form" onSubmit={handleRuleSubmit} sx={{ display: 'flex', flexDirection: 'column', gap: 2, mb: 3 }}>
-          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-            <TextField
-              select
-              label="Action"
-              value={ruleForm.action}
-              onChange={(event) => setRuleForm((prev) => ({ ...prev, action: event.target.value as 'allow' | 'deny' }))}
-              disabled={!selectedProfile}
-            >
-              <MenuItem value="allow">allow</MenuItem>
-              <MenuItem value="deny">deny</MenuItem>
-            </TextField>
+            <div className="space-y-2">
+              <Label className="text-zinc-300">Value *</Label>
+              <Input
+                value={ruleForm.value}
+                onChange={(e) =>
+                  setRuleForm((p) => ({ ...p, value: e.target.value }))
+                }
+                disabled={!selectedProfile}
+                placeholder=".github.com"
+                className="border-zinc-800 bg-zinc-950/70 text-zinc-100 placeholder:text-zinc-500"
+              />
+            </div>
 
-            <TextField
-              select
-              label="Rule Type"
-              value={ruleForm.rule_type}
-              onChange={(event) => setRuleForm((prev) => ({
-                ...prev,
-                rule_type: event.target.value as OutboundDestinationRuleCreate['rule_type'],
-              }))}
-              disabled={!selectedProfile}
-            >
-              <MenuItem value="domain_suffix">domain_suffix</MenuItem>
-              <MenuItem value="domain_exact">domain_exact</MenuItem>
-              <MenuItem value="host_exact">host_exact</MenuItem>
-              <MenuItem value="cidr">cidr</MenuItem>
-              <MenuItem value="port">port</MenuItem>
-            </TextField>
-
-            <TextField
-              type="number"
-              label="Priority"
-              value={ruleForm.priority}
-              onChange={(event) => setRuleForm((prev) => ({ ...prev, priority: Number(event.target.value) }))}
-              inputProps={{ min: 0, max: 1000000 }}
-              disabled={!selectedProfile}
-            />
-          </Box>
-
-          <TextField
-            required
-            label="Value"
-            value={ruleForm.value}
-            onChange={(event) => setRuleForm((prev) => ({ ...prev, value: event.target.value }))}
-            disabled={!selectedProfile}
-            placeholder=".github.com"
-          />
-
-          <FormControlLabel
-            control={(
+            <div className="flex items-center justify-between max-w-xs">
+              <Label className="text-zinc-300 text-sm">Enabled</Label>
               <Switch
                 checked={ruleForm.is_enabled}
-                onChange={(event) => setRuleForm((prev) => ({ ...prev, is_enabled: event.target.checked }))}
+                onCheckedChange={(v) =>
+                  setRuleForm((p) => ({ ...p, is_enabled: v }))
+                }
                 disabled={!selectedProfile}
               />
-            )}
-            label="Enabled"
-          />
+            </div>
 
-          <Stack direction="row" spacing={1}>
-            <Button type="submit" variant="contained" disabled={!selectedProfile || saving || loading}>
-              {editingRuleId ? 'Update Rule' : 'Add Rule'}
-            </Button>
-            <Button
-              type="button"
-              variant="outlined"
-              onClick={() => {
-                setEditingRuleId(null);
-                setRuleForm(DEFAULT_RULE_FORM);
-              }}
-              disabled={saving || loading}
-            >
-              Reset
-            </Button>
-          </Stack>
-        </Box>
+            <div className="flex gap-2">
+              <Button
+                type="submit"
+                disabled={!selectedProfile || saving || loading}
+                className="bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+              >
+                <Plus className="h-4 w-4 mr-1.5" />
+                {editingRuleId ? "Update Rule" : "Add Rule"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setEditingRuleId(null);
+                  setRuleForm(DEFAULT_RULE_FORM);
+                }}
+                disabled={saving || loading}
+                className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                Reset
+              </Button>
+            </div>
+          </form>
 
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>ID</TableCell>
-                <TableCell>Action</TableCell>
-                <TableCell>Type</TableCell>
-                <TableCell>Value</TableCell>
-                <TableCell>Priority</TableCell>
-                <TableCell>Enabled</TableCell>
-                <TableCell>Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {rules.map((rule) => (
-                <TableRow key={rule.id}>
-                  <TableCell>{rule.id}</TableCell>
-                  <TableCell>{rule.action}</TableCell>
-                  <TableCell>{rule.rule_type}</TableCell>
-                  <TableCell>{rule.value}</TableCell>
-                  <TableCell>{rule.priority}</TableCell>
-                  <TableCell>{rule.is_enabled ? 'yes' : 'no'}</TableCell>
-                  <TableCell>
-                    <Stack direction="row" spacing={1}>
-                      <Button size="small" onClick={() => handleRuleEdit(rule)}>Edit</Button>
-                      <Button size="small" color="error" onClick={() => void handleRuleDelete(rule.id)}>Delete</Button>
-                    </Stack>
-                  </TableCell>
+          <div className="rounded-md border border-zinc-800/70 overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="border-zinc-800/70 hover:bg-transparent">
+                  <TableHead className="text-zinc-400">ID</TableHead>
+                  <TableHead className="text-zinc-400">Action</TableHead>
+                  <TableHead className="text-zinc-400">Type</TableHead>
+                  <TableHead className="text-zinc-400">Value</TableHead>
+                  <TableHead className="text-zinc-400">Priority</TableHead>
+                  <TableHead className="text-zinc-400">Enabled</TableHead>
+                  <TableHead className="text-zinc-400 text-right">
+                    Actions
+                  </TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
-    </Box>
+              </TableHeader>
+              <TableBody>
+                {rules.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell
+                      colSpan={7}
+                      className="text-center text-zinc-500 py-6"
+                    >
+                      {selectedProfile
+                        ? "No rules for this profile."
+                        : "Select a profile first."}
+                    </TableCell>
+                  </TableRow>
+                )}
+                {rules.map((rule) => (
+                  <TableRow
+                    key={rule.id}
+                    className="border-zinc-800/70 hover:bg-zinc-800/30"
+                  >
+                    <TableCell className="text-zinc-400 text-xs">
+                      {rule.id}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        className={
+                          rule.action === "allow"
+                            ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/15"
+                            : "bg-red-500/15 text-red-400 border-red-500/30 hover:bg-red-500/15"
+                        }
+                      >
+                        {rule.action}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-zinc-300 text-sm">
+                      {rule.rule_type}
+                    </TableCell>
+                    <TableCell className="text-zinc-200 font-mono text-sm">
+                      {rule.value}
+                    </TableCell>
+                    <TableCell className="text-zinc-300 text-sm">
+                      {rule.priority}
+                    </TableCell>
+                    <TableCell>
+                      {rule.is_enabled ? (
+                        <span className="text-emerald-400 text-xs">yes</span>
+                      ) : (
+                        <span className="text-zinc-500 text-xs">no</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right space-x-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+                        onClick={() => handleRuleEdit(rule)}
+                      >
+                        <Pencil className="h-3 w-3 mr-1" />
+                        Edit
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                        onClick={() => void handleRuleDelete(rule.id)}
+                      >
+                        <Trash2 className="h-3 w-3 mr-1" />
+                        Delete
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 };
 
