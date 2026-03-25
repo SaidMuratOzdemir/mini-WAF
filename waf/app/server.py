@@ -32,14 +32,29 @@ BAN_TTL_SECONDS = int(os.getenv("BAN_TTL_SECONDS", "3600"))
 INSPECTION_QUEUE_SIZE = int(os.getenv("INSPECTION_QUEUE_SIZE", "5000"))
 INSPECTION_WORKERS = int(os.getenv("INSPECTION_WORKERS", "8"))
 VT_TIMEOUT_SECONDS = float(os.getenv("VT_TIMEOUT_SECONDS", "8"))
+VT_CACHE_TTL_SECONDS = int(os.getenv("VT_CACHE_TTL_SECONDS", "3600"))
 MAX_LOG_BODY_BYTES = int(os.getenv("MAX_LOG_BODY_BYTES", "16384"))
 INSPECTION_TTL_DAYS = int(os.getenv("WAF_INSPECTION_TTL_DAYS", "30"))
+WAF_BLOCK_RESPONSE_BODY = os.getenv("WAF_BLOCK_RESPONSE_BODY", "")
+WAF_BLOCK_RESPONSE_CONTENT_TYPE = os.getenv("WAF_BLOCK_RESPONSE_CONTENT_TYPE", "application/json")
 
 logging.basicConfig(
     level=logging.DEBUG if DEBUG else logging.INFO,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _build_block_response(reason: str) -> Response:
+    """Build the 403 response, optionally using custom body/content-type from env vars."""
+    import json as _json
+    if WAF_BLOCK_RESPONSE_BODY:
+        body = WAF_BLOCK_RESPONSE_BODY.replace("{reason}", reason)
+        content_type = WAF_BLOCK_RESPONSE_CONTENT_TYPE
+    else:
+        body = _json.dumps({"allowed": False, "reason": reason})
+        content_type = "application/json"
+    return Response(content=body, status_code=403, media_type=content_type)
 
 
 @dataclass(slots=True)
@@ -179,6 +194,18 @@ async def _query_virustotal(app: FastAPI, ip: str) -> dict[str, Any]:
             "response": None,
         }
 
+    # Check Redis VT cache before querying the API
+    redis_client: redis.Redis | None = getattr(app.state, "redis_client", None)
+    if redis_client is not None and VT_CACHE_TTL_SECONDS > 0:
+        try:
+            import json as _json
+            cache_key = f"vt_cache:{ip}"
+            cached = await redis_client.get(cache_key)
+            if cached:
+                return _json.loads(cached)
+        except Exception:
+            pass  # Cache miss or Redis error — proceed to API call
+
     try:
         response = await app.state.vt_http_client.get(
             f"/ip_addresses/{ip}",
@@ -221,12 +248,24 @@ async def _query_virustotal(app: FastAPI, ip: str) -> dict[str, Any]:
         }
 
     payload = response.json()
-    return {
+    result = {
         "status": "ok",
         "http_status": 200,
         "is_malicious": _is_vt_report_malicious(payload),
         "response": payload,
     }
+
+    # Store result in Redis cache (exclude full response payload to save space)
+    if redis_client is not None and VT_CACHE_TTL_SECONDS > 0:
+        try:
+            import json as _json
+            cache_key = f"vt_cache:{ip}"
+            slim = {k: v for k, v in result.items() if k != "response"}
+            await redis_client.setex(cache_key, VT_CACHE_TTL_SECONDS, _json.dumps(slim))
+        except Exception:
+            pass
+
+    return result
 
 
 async def _ban_ip(redis_client: redis.Redis | None, ip: str, reason: str) -> None:
@@ -289,6 +328,11 @@ async def _process_job(app: FastAPI, worker_id: int, job: InspectionJob) -> None
 
     if decision == "ban":
         await _ban_ip(app.state.redis_client, job.client_ip, ban_reason)
+
+    # MongoDB sadece security event (ban/malicious) loglar.
+    # Normal allow trafiği DiaLog PostgreSQL'inde zaten kayıtlı — duplikasyon yok.
+    if decision != "ban":
+        return
 
     request_payload = {
         **job.metadata,
@@ -480,11 +524,17 @@ async def inspect(request: Request) -> Response:
         redis_client: redis.Redis | None = request.app.state.redis_client
         if redis_client is not None and client_ip and client_ip != "unknown":
             try:
-                if await redis_client.exists(f"{BAN_KEY_PREFIX}{client_ip}"):
-                    return Response(status_code=403)
+                # GET returns the ban reason string (e.g. "SQL_IN_QUERY") or None
+                ban_reason = await redis_client.get(f"{BAN_KEY_PREFIX}{client_ip}")
+                if ban_reason is not None:
+                    return _build_block_response(ban_reason)
 
                 if await redis_client.exists(f"{CLEAN_KEY_PREFIX}{client_ip}"):
-                    return Response(status_code=200)
+                    return Response(
+                        content='{"allowed":true}',
+                        status_code=200,
+                        media_type="application/json",
+                    )
             except Exception:
                 logger.exception("Redis lookup failed for ip=%s. Falling open.", client_ip)
 
@@ -505,10 +555,18 @@ async def inspect(request: Request) -> Response:
                 metadata.get("uri", ""),
             )
 
-        return Response(status_code=200)
+        return Response(
+            content='{"allowed":true}',
+            status_code=200,
+            media_type="application/json",
+        )
     except Exception:
         logger.exception("Unhandled error in /inspect. Falling open for ip=%s", client_ip)
-        return Response(status_code=200)
+        return Response(
+            content='{"allowed":true}',
+            status_code=200,
+            media_type="application/json",
+        )
 
 
 if __name__ == "__main__":
